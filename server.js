@@ -2,7 +2,7 @@
 import express from "express";
 import fs from "fs";
 const app = express();
-const port = process.env.PORT || 10000;
+const port = process.env.PORT || 10010;
 
 app.use(express.json({ limit: "1mb" }));
 
@@ -30,4 +30,5 @@ app.get("/", (req, res) => {
 
 app.listen(port, () => {
   console.log(`AUTSYS relay attivo sulla porta ${port}`);
+
 });
