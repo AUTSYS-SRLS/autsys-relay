@@ -19,16 +19,28 @@ app.post("/", (req, res) => {
 
 // Roberta chiede aggiornamenti (GET)
 app.get("/", (req, res) => {
-  if (fs.existsSync(outbox) && fs.statSync(outbox).size > 0) {
-    const content = fs.readFileSync(outbox, "utf8");
-    fs.writeFileSync(outbox, "", "utf8");
-    res.type("application/json").send(content);
-  } else {
-    res.json({ status: "empty" });
-  }
+    if (fs.existsSync(outbox) && fs.statSync(outbox).size > 0) {
+        const content = fs.readFileSync(outbox, "utf8");
+        fs.writeFileSync(outbox, "", "utf8");
+        res.type("application/json").send(content);
+    } else {
+        res.json({ status: "empty" });
+    }
+});
+
+// Freja (mobile) chiede aggiornamenti (GET)
+app.get("/mobile", (req, res) => {
+    if (fs.existsSync(outbox) && fs.statSync(outbox).size > 0) {
+        const content = fs.readFileSync(outbox, "utf8");
+        fs.writeFileSync(outbox, "", "utf8");
+        res.type("application/json").send(content);
+    } else {
+        res.json({ status: "empty" });
+    }
 });
 
 app.listen(port, () => {
   console.log(`AUTSYS relay attivo sulla porta ${port}`);
 
 });
+
