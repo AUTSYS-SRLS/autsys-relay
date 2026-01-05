@@ -1,86 +1,87 @@
-// AUTSYS Relay – queue per-destinazione (fix: niente più messaggi "-1")
-// Compatibile con Render
-// Compatibilità endpoint legacy: /mobile, /roberta, /freya
+// AUTSYS Relay – basato su OLD, con controllo anti-ritardo
+// Obiettivo: nessun "messaggio -1", zero log spam (no ping visibile)
+// Compatibilità endpoint: /, /mobile, /roberta
+// Logica: inbox (verso Roberta) separato da outbox_freya (verso Freya)
 
 import express from "express";
 import fs from "fs";
-import path from "path";
-import crypto from "crypto";
 
 const app = express();
 const port = process.env.PORT || 10010;
 
 app.use(express.json({ limit: "1mb" }));
 
-// Request log (per debug: Freya/Roberta hitting which endpoint)
-app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
-  next();
-});
+// File code (Render FS effimero: ok per relay "live")
+const INBOX = "inbox.jsonl";            // messaggi DIRETTI a Roberta
+const OUT_FREYA = "outbox_freya.jsonl"; // risposte DIRETTE a Freya
 
-const QDIR = "queue";
-
-function ensureQueueDir() {
-  if (!fs.existsSync(QDIR)) fs.mkdirSync(QDIR, { recursive: true });
+function appendLine(file, obj) {
+  fs.appendFileSync(file, JSON.stringify(obj) + "\n", "utf8");
 }
 
-function qfile(who) {
-  return path.join(QDIR, `${who}.jsonl`);
+function popAll(file) {
+  if (fs.existsSync(file) && fs.statSync(file).size > 0) {
+    const content = fs.readFileSync(file, "utf8");
+    fs.writeFileSync(file, "", "utf8");
+    return content;
+  }
+  return null;
 }
 
-function safeWho(v, fallback) {
-  const s = String(v || "").toLowerCase().trim();
-  if (s === "freya" || s === "roberta") return s;
-  return fallback;
-}
+// -------------------------
+// POST
+// -------------------------
+// /roberta  : messaggi verso Roberta (inbox)
+// /mobile   : messaggi verso Freya (outbox_freya)
+// /         : legacy -> se body.to==="freya" va in outbox_freya, altrimenti inbox
+function handlePost(req, res, forceTo = null) {
+  const body = (req.body && typeof req.body === "object") ? req.body : { raw: req.body };
 
-function handlePost(req, res) {
-  ensureQueueDir();
-
-  const body = req.body || {};
-  const to = safeWho(body.to, "roberta");
-  const client_msg_id = body.client_msg_id || crypto.randomUUID();
+  // Destinazione
+  const to =
+    (forceTo || String(body.to || "").toLowerCase().trim() || "roberta");
 
   const envelope = {
     ...body,
     to,
-    client_msg_id,
     ts: body.ts || Date.now(),
   };
 
-  fs.appendFileSync(qfile(to), JSON.stringify(envelope) + "\n", "utf8");
-  res.json({ status: "queued", to, client_msg_id, ts: Date.now() });
-}
-
-function handleGet(req, res, whoOverride = null) {
-  ensureQueueDir();
-
-  const who = whoOverride || safeWho(req.query.who, "freya");
-  const f = qfile(who);
-
-  if (fs.existsSync(f) && fs.statSync(f).size > 0) {
-    const content = fs.readFileSync(f, "utf8");
-    fs.writeFileSync(f, "", "utf8");
-    res.type("application/json").send(content);
+  if (to === "freya") {
+    appendLine(OUT_FREYA, envelope);
+    res.json({ status: "queued", to: "freya", ts: Date.now() });
   } else {
-    res.json({ status: "empty", who });
+    appendLine(INBOX, envelope);
+    res.json({ status: "queued", to: "roberta", ts: Date.now() });
   }
 }
 
-// Modern endpoints
-app.post("/", handlePost);
-app.get("/", (req, res) => handleGet(req, res));
+app.post("/", (req, res) => handlePost(req, res, null));
+app.post("/roberta", (req, res) => handlePost(req, res, "roberta"));
+app.post("/mobile", (req, res) => handlePost(req, res, "freya"));
 
-// Legacy endpoint used by Freya (observed): /mobile
-app.post("/mobile", handlePost);
-app.get("/mobile", (req, res) => handleGet(req, res));
+// -------------------------
+// GET
+// -------------------------
+// /roberta : Roberta legge SOLO l'inbox (messaggi verso Roberta)
+// /mobile  : Freya legge SOLO la sua outbox
+// /        : legacy -> Freya outbox
+function handleGet(req, res, which) {
+  let content = null;
 
-// Legacy endpoints used by Core (observed): /roberta and /freya
-app.post("/roberta", handlePost);
-app.get("/roberta", (req, res) => handleGet(req, res, "roberta"));
+  if (which === "inbox") content = popAll(INBOX);
+  if (which === "out_freya") content = popAll(OUT_FREYA);
 
-app.post("/freya", handlePost);
-app.get("/freya", (req, res) => handleGet(req, res, "freya"));
+  if (content) {
+    res.type("application/json").send(content);
+  } else {
+    res.json({ status: "empty" });
+  }
+}
+
+app.get("/", (req, res) => handleGet(req, res, "out_freya"));
+app.get("/mobile", (req, res) => handleGet(req, res, "out_freya"));
+app.get("/roberta", (req, res) => handleGet(req, res, "inbox"));
 
 app.listen(port, () => {
   console.log(`AUTSYS relay attivo sulla porta ${port}`);
