@@ -1,4 +1,5 @@
 // AUTSYS Relay – queue per-destinazione (fix: niente più messaggi "-1")
+// Compatibilità: supporta anche /mobile (Freya legacy) senza cambiare l'app
 // Compatibile con Render
 
 import express from "express";
@@ -11,43 +12,34 @@ const port = process.env.PORT || 10010;
 
 app.use(express.json({ limit: "1mb" }));
 
-// Request log (per debug: Freya/Roberta hitting which endpoint)
-app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
-  next();
-});
-
-
 // Directory code+data (Render: filesystem effimero, ok per relay "live")
 const QDIR = "queue";
+if (!fs.existsSync(QDIR)) fs.mkdirSync(QDIR);
 
-function ensureQueueDir() {
-  if (!fs.existsSync(QDIR)) fs.mkdirSync(QDIR, { recursive: true });
-}
-
+// File coda per destinatario
 function qfile(who) {
-  // who: "freya" | "roberta"
   return path.join(QDIR, `${who}.jsonl`);
 }
 
-function safeWho(v, fallback) {
-  const s = String(v || "").toLowerCase().trim();
+function safeWho(x, fallback) {
+  const s = String(x || "").trim().toLowerCase();
   if (s === "freya" || s === "roberta") return s;
   return fallback;
 }
 
-// POST: invio messaggio verso un destinatario (to)
-// Richiesta consigliata:
-//  - Freya -> Roberta: {"to":"roberta","client_msg_id":"uuid","conversation_id":"...","text":"..."}
-//  - Roberta -> Freya: {"to":"freya","in_reply_to":"<client_msg_id_freya>","text":"..."}
-app.post("/", (req, res) => {
-  ensureQueueDir();
+function uuid() {
+  return crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString("hex");
+}
 
+// ---------------------------
+// HANDLERS (riusati su / e /mobile)
+// ---------------------------
+
+// POST: accoda messaggi per "to"
+function postHandler(req, res) {
   const body = req.body || {};
-  const to = safeWho(body.to, "roberta");
-
-  // Se Freya non manda un client_msg_id, lo generiamo qui e lo ritorniamo come ACK
-  const client_msg_id = body.client_msg_id || crypto.randomUUID();
+  const to = safeWho(body.to, "roberta"); // default: verso Roberta
+  const client_msg_id = body.client_msg_id || uuid();
 
   const envelope = {
     ...body,
@@ -60,27 +52,55 @@ app.post("/", (req, res) => {
 
   // ACK immediato
   res.json({ status: "queued", to, client_msg_id, ts: Date.now() });
-});
+}
 
 // GET: leggi messaggi destinati a "who" e svuota la sua coda
 // Uso:
 //  - Freya:   GET /?who=freya
 //  - Roberta: GET /?who=roberta
-app.get("/", (req, res) => {
-  ensureQueueDir();
+function getHandler(req, res) {
+  const who = safeWho(req.query.who, "freya"); // default: freya
+  const file = qfile(who);
 
-  const who = safeWho(req.query.who, "freya");
-  const f = qfile(who);
-
-  if (fs.existsSync(f) && fs.statSync(f).size > 0) {
-    const content = fs.readFileSync(f, "utf8");
-    fs.writeFileSync(f, "", "utf8");
-    res.type("application/json").send(content);
-  } else {
-    res.json({ status: "empty", who });
+  if (!fs.existsSync(file)) {
+    res.json({ status: "ok", who, messages: [] });
+    return;
   }
-});
+
+  const raw = fs.readFileSync(file, "utf8").trim();
+  fs.writeFileSync(file, "", "utf8"); // svuota
+
+  if (!raw) {
+    res.json({ status: "ok", who, messages: [] });
+    return;
+  }
+
+  const messages = raw
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => {
+      try { return JSON.parse(line); } catch { return null; }
+    })
+    .filter(Boolean);
+
+  res.json({ status: "ok", who, messages });
+}
+
+// ---------------------------
+// ROUTES
+// ---------------------------
+
+// Nuove route
+app.post("/", postHandler);
+app.get("/", getHandler);
+
+// Compatibilità legacy: Freya vecchia chiama /mobile
+app.post("/mobile", postHandler);
+app.get("/mobile", getHandler);
+
+// Health
+app.get("/health", (_req, res) => res.send("OK"));
 
 app.listen(port, () => {
-  console.log(`AUTSYS relay attivo sulla porta ${port}`);
+  console.log(`AUTSYS Relay listening on port ${port}`);
 });
