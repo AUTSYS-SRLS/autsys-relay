@@ -1,13 +1,15 @@
-// AUTSYS Relay – DIAGNOSTIC SAFE (Freja 2.2.6 + Roberta Core)
-// Fix: code in-memory (no filesystem dependency) + endpoint /diag per verifiche.
-// Obiettivo: eliminare il caso "POST ok ma inbox vuota" dovuto a fs/istanze.
+// AUTSYS Relay – DIAGNOSTIC SAFE (MSG_ID FIX)
+// In-memory queues + /diag
 // Endpoints:
 // - GET  /            health
-// - GET  /diag        counts + last errors
-// - POST /mobile      enqueue Freja->Roberta (immediato)
-// - GET  /mobile      dequeue Roberta->Freja
+// - GET  /diag        counts + last ok timestamps + last error
+// - POST /mobile      enqueue Freja->Roberta
 // - GET  /roberta     dequeue Freja->Roberta
 // - POST /roberta     enqueue Roberta->Freja
+// - GET  /mobile      dequeue Roberta->Freja
+//
+// IMPORTANT: outbox items ALWAYS carry msg_id so Freja can correlate.
+// Also: permissive CORS for iOS apps.
 
 import express from "express";
 
@@ -16,100 +18,119 @@ const port = process.env.PORT || 10010;
 
 app.use(express.json({ limit: "1mb" }));
 
-function nowTs() {
-  return Math.floor(Date.now() / 1000);
-}
+// CORS (iOS-friendly)
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  if (req.method === "OPTIONS") return res.status(200).end();
+  next();
+});
 
-// In-memory queues (single instance). Render normalmente 1 istanza; se più istanze, serve storage condiviso.
-const inbox = [];   // Freja -> Roberta: {ts, source, message}
-const outbox = [];  // Roberta -> Freja: {ts, text}
+// --------------------
+// In-memory queues
+// --------------------
+const inbox = [];  // Freja -> Roberta : { ts, msg_id, state, message, source }
+const outbox = []; // Roberta -> Freja : { ts, msg_id, text }
+
+// --------------------
+// Diagnostics
+// --------------------
+const nowTs = () => Math.floor(Date.now() / 1000);
 
 let lastEnqueueInboxOkTs = 0;
 let lastEnqueueOutboxOkTs = 0;
+let lastDequeueInboxOkTs = 0;
+let lastDequeueOutboxOkTs = 0;
 let lastError = null;
 
-// HEALTH
+// --------------------
+// Health
+// --------------------
 app.get("/", (req, res) => {
-  res.json({ ok: true, service: "AUTSYS_RELAY", ts: nowTs() });
+  return res.json({ ok: true, ts: nowTs() });
 });
 
-// DIAG
+// --------------------
+// Diag
+// --------------------
 app.get("/diag", (req, res) => {
-  res.json({
+  return res.json({
     ok: true,
     ts: nowTs(),
     inbox_len: inbox.length,
     outbox_len: outbox.length,
     lastEnqueueInboxOkTs,
     lastEnqueueOutboxOkTs,
+    lastDequeueInboxOkTs,
+    lastDequeueOutboxOkTs,
     lastError
   });
 });
 
-// FREJA -> Relay
+// --------------------
+// Freja -> Relay (enqueue)
+//
+// Body: { source, msg_id, state, message }
+// --------------------
 app.post("/mobile", (req, res) => {
   try {
-    const body = req.body || {};
-    const message = (body.message ?? body.text ?? "").toString();
+    const source = String(req.body?.source ?? "freja_app");
+    const msg_id = String(req.body?.msg_id ?? "").trim();
+    const state = String(req.body?.state ?? "DA_RISPONDERE");
+    const message = String(req.body?.message ?? "");
 
     if (message.trim().length > 0) {
-      inbox.push({
-        ts: nowTs(),
-        source: (body.source || "freja_app").toString(),
-        message
-      });
+      inbox.push({ ts: nowTs(), msg_id, state, message, source });
       lastEnqueueInboxOkTs = nowTs();
     }
 
-    return res.json({ status: "received_by_relay" });
+    return res.json({ ok: true });
   } catch (e) {
     lastError = { ts: nowTs(), where: "POST /mobile", err: String(e) };
-    return res.json({ status: "error" });
+    return res.json({ ok: true });
   }
 });
 
-// Freja polling per risposta
-app.get("/mobile", (req, res) => {
-  try {
-    if (outbox.length === 0) return res.json({ status: "empty" });
-
-    const msg = outbox.shift();
-    const text = (msg.text ?? "").toString().trim();
-    if (!text) return res.json({ status: "empty" });
-
-    return res.json({ text });
-  } catch (e) {
-    lastError = { ts: nowTs(), where: "GET /mobile", err: String(e) };
-    return res.json({ status: "empty" });
-  }
-});
-
-// Roberta polling per messaggi da Freja
+// --------------------
+// Roberta <- Relay (dequeue)
+//
+// Returns:
+// - { status: "empty" } if none
+// - { msg_id, state, message, ts } if present
+// --------------------
 app.get("/roberta", (req, res) => {
   try {
     if (inbox.length === 0) return res.json({ status: "empty" });
 
-    const job = inbox.shift();
-    const source = (job.source || "freja_app").toString();
-    const message = (job.message || "").toString();
+    const item = inbox.shift();
+    lastDequeueInboxOkTs = nowTs();
 
-    if (!message.trim()) return res.json({ status: "empty" });
-
-    return res.json({ source, message });
+    return res.json({
+      msg_id: item.msg_id ?? "",
+      state: item.state ?? "DA_RISPONDERE",
+      message: item.message ?? "",
+      ts: item.ts ?? nowTs()
+    });
   } catch (e) {
     lastError = { ts: nowTs(), where: "GET /roberta", err: String(e) };
     return res.json({ status: "empty" });
   }
 });
 
-// Roberta -> Relay (risposta verso Freja)
+// --------------------
+// Roberta -> Relay (enqueue)
+//
+// Body: { text, msg_id }
+// NOTE: msg_id is required for correct correlation. If missing, we still enqueue with "".
+// --------------------
 app.post("/roberta", (req, res) => {
   try {
-    const body = req.body || {};
-    const text = (body.text ?? body.message ?? "").toString();
+    const text = String(req.body?.text ?? "");
+    const msg_id = String(req.body?.msg_id ?? "").trim();
 
     if (text.trim().length > 0) {
-      outbox.push({ ts: nowTs(), text });
+      outbox.push({ ts: nowTs(), msg_id, text });
       lastEnqueueOutboxOkTs = nowTs();
     }
 
@@ -117,6 +138,31 @@ app.post("/roberta", (req, res) => {
   } catch (e) {
     lastError = { ts: nowTs(), where: "POST /roberta", err: String(e) };
     return res.json({ ok: true });
+  }
+});
+
+// --------------------
+// Freja <- Relay (dequeue)
+//
+// Returns:
+// - { status: "empty" } if none
+// - { text, msg_id, ts } if present
+// --------------------
+app.get("/mobile", (req, res) => {
+  try {
+    if (outbox.length === 0) return res.json({ status: "empty" });
+
+    const item = outbox.shift();
+    lastDequeueOutboxOkTs = nowTs();
+
+    return res.json({
+      text: item.text ?? "",
+      msg_id: item.msg_id ?? "",
+      ts: item.ts ?? nowTs()
+    });
+  } catch (e) {
+    lastError = { ts: nowTs(), where: "GET /mobile", err: String(e) };
+    return res.json({ status: "empty" });
   }
 });
 
