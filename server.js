@@ -34,6 +34,20 @@ const inbox = [];  // Freja -> Roberta : { ts, msg_id, state, message, source }
 const outbox = []; // Roberta -> Freja : { ts, msg_id, text }
 
 // --------------------
+// Dedup (client_msg_id)
+// --------------------
+const DEDUP_WINDOW_MS = 60_000; // 60s
+const recentClientMsgIds = new Map(); // client_msg_id -> ts(ms)
+
+function pruneRecent() {
+  const now = Date.now();
+  for (const [k, v] of recentClientMsgIds.entries()) {
+    if (now - v > DEDUP_WINDOW_MS) recentClientMsgIds.delete(k);
+  }
+}
+
+
+// --------------------
 // Diagnostics
 // --------------------
 const nowTs = () => Math.floor(Date.now() / 1000);
@@ -77,56 +91,42 @@ app.post("/mobile", (req, res) => {
   try {
     const source = String(req.body?.source ?? "freja_app");
     let msg_id = String(req.body?.msg_id ?? "").trim();
+
+    // Prefer client_msg_id for dedup (Freja can send it). Fallback to msg_id if provided.
     const client_msg_id = String(req.body?.client_msg_id ?? req.body?.msg_id ?? "").trim();
+
     pruneRecent();
     if (client_msg_id && recentClientMsgIds.has(client_msg_id)) {
-      // Duplicate: ACK subito senza enqueue
+      // Duplicate: ACK subito senza enqueue (Roberta non vedrà mai il doppio)
       lastEnqueueInboxOkTs = nowTs();
-      return res.json({ ok: true, msg_id, duplicate: true });
+      return res.json({ ok: true, msg_id: msg_id ?? "", duplicate: true });
     }
 
     const state = String(req.body?.state ?? "DA_RISPONDERE");
     const message = String(req.body?.message ?? "");
     const tsIn = req.body?.ts;
     const tsVal = Number.isFinite(tsIn) ? Number(tsIn) : nowTs();
+
     if (!msg_id) {
       msg_id = `${tsVal}_${Math.random().toString(16).slice(2)}_${Math.random().toString(16).slice(2)}`;
     }
+
     if (message.trim().length > 0) {
-          if (client_msg_id) recentClientMsgIds.set(client_msg_id, Date.now());
-    inbox.push({ ts: tsVal, msg_id, state, message, source });
+      if (client_msg_id) recentClientMsgIds.set(client_msg_id, Date.now());
+      inbox.push({ ts: tsVal, msg_id, state, message, source });
       lastEnqueueInboxOkTs = nowTs();
     }
+
     return res.json({ ok: true, msg_id });
   } catch (e) {
     lastError = { ts: nowTs(), where: "POST /mobile", err: String(e) };
-    return res.json({ ok: true, msg_id: "" });
-  }
-});// --------------------
-// Roberta <- Relay (dequeue)
-//
-// Returns:
-// - { status: "empty" } if none
-// - { msg_id, state, message, ts } if present
-// --------------------
-app.get("/roberta", (req, res) => {
-  try {
-    if (inbox.length === 0) return res.json({ status: "empty" });
-
-    const item = inbox.shift();
-    lastDequeueInboxOkTs = nowTs();
-
     return res.json({
-      msg_id: item.msg_id ?? "",
-      state: item.state ?? "DA_RISPONDERE",
-      message: item.message ?? "",
-      ts: item.ts ?? nowTs()
+      ok: false,
+      error: "post_mobile_error"
     });
-  } catch (e) {
-    lastError = { ts: nowTs(), where: "GET /roberta", err: String(e) };
-    return res.json({ status: "empty" });
   }
 });
+
 
 // --------------------
 // Roberta -> Relay (enqueue)
