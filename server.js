@@ -1,4 +1,4 @@
-// AUTSYS Relay – DIAGNOSTIC SAFE (MSG_ID FIX)
+// AUTSYS Relay – DIAGNOSTIC SAFE (MSG_ID FIX + DEDUP)
 // In-memory queues + /diag
 // Endpoints:
 // - GET  /            health
@@ -77,6 +77,14 @@ app.post("/mobile", (req, res) => {
   try {
     const source = String(req.body?.source ?? "freja_app");
     let msg_id = String(req.body?.msg_id ?? "").trim();
+    const client_msg_id = String(req.body?.client_msg_id ?? req.body?.msg_id ?? "").trim();
+    pruneRecent();
+    if (client_msg_id && recentClientMsgIds.has(client_msg_id)) {
+      // Duplicate: ACK subito senza enqueue
+      lastEnqueueInboxOkTs = nowTs();
+      return res.json({ ok: true, msg_id, duplicate: true });
+    }
+
     const state = String(req.body?.state ?? "DA_RISPONDERE");
     const message = String(req.body?.message ?? "");
     const tsIn = req.body?.ts;
@@ -85,7 +93,8 @@ app.post("/mobile", (req, res) => {
       msg_id = `${tsVal}_${Math.random().toString(16).slice(2)}_${Math.random().toString(16).slice(2)}`;
     }
     if (message.trim().length > 0) {
-      inbox.push({ ts: tsVal, msg_id, state, message, source });
+          if (client_msg_id) recentClientMsgIds.set(client_msg_id, Date.now());
+    inbox.push({ ts: tsVal, msg_id, state, message, source });
       lastEnqueueInboxOkTs = nowTs();
     }
     return res.json({ ok: true, msg_id });
