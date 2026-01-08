@@ -76,23 +76,24 @@ app.get("/diag", (req, res) => {
 app.post("/mobile", (req, res) => {
   try {
     const source = String(req.body?.source ?? "freja_app");
-    const msg_id = String(req.body?.msg_id ?? "").trim();
+    let msg_id = String(req.body?.msg_id ?? "").trim();
     const state = String(req.body?.state ?? "DA_RISPONDERE");
     const message = String(req.body?.message ?? "");
-
+    const tsIn = req.body?.ts;
+    const tsVal = Number.isFinite(tsIn) ? Number(tsIn) : nowTs();
+    if (!msg_id) {
+      msg_id = `${tsVal}_${Math.random().toString(16).slice(2)}_${Math.random().toString(16).slice(2)}`;
+    }
     if (message.trim().length > 0) {
-      inbox.push({ ts: nowTs(), msg_id, state, message, source });
+      inbox.push({ ts: tsVal, msg_id, state, message, source });
       lastEnqueueInboxOkTs = nowTs();
     }
-
-    return res.json({ ok: true });
+    return res.json({ ok: true, msg_id });
   } catch (e) {
     lastError = { ts: nowTs(), where: "POST /mobile", err: String(e) };
-    return res.json({ ok: true });
+    return res.json({ ok: true, msg_id: "" });
   }
-});
-
-// --------------------
+});// --------------------
 // Roberta <- Relay (dequeue)
 //
 // Returns:
