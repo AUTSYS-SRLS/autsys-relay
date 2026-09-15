@@ -2,7 +2,11 @@ import express from "express";
 import http from "http";
 import crypto from "crypto";
 import { WebSocketServer, WebSocket } from "ws";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { z } from "zod";
 
+const VERSION = "0.1.0.10";
 const PORT = Number(process.env.PORT || 10000);
 const BRIDGE_TOKEN = process.env.BRIDGE_TOKEN || "";
 const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
@@ -85,11 +89,153 @@ function selectBridge(requestedBridgeId) {
   return { bridgeId, ...item };
 }
 
+async function executeBridge(tool, args = {}, requestedBridgeId = "", requestIdOverride = "") {
+  const cleanTool = String(tool || "").trim();
+  if (!cleanTool) throw new Error("tool is required");
+
+  const requestId = String(requestIdOverride || crypto.randomUUID());
+  if (pending.has(requestId)) {
+    throw new Error("requestId already in use");
+  }
+
+  const bridge = selectBridge(String(requestedBridgeId || ""));
+  const startedAt = performance.now();
+
+  const bridgeResponse = await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      pending.delete(requestId);
+      reject(new Error(`Bridge timeout after ${REQUEST_TIMEOUT_MS} ms`));
+    }, REQUEST_TIMEOUT_MS);
+
+    pending.set(requestId, {
+      resolve,
+      reject,
+      timeout,
+      startedAt,
+      bridgeId: bridge.bridgeId
+    });
+
+    try {
+      sendJson(bridge.ws, {
+        type: "execute",
+        protocolVersion: "1",
+        requestId,
+        tool: cleanTool,
+        arguments: args ?? {}
+      });
+    } catch (err) {
+      clearTimeout(timeout);
+      pending.delete(requestId);
+      reject(err);
+    }
+  });
+
+  return {
+    ok: true,
+    requestId,
+    bridgeId: bridge.bridgeId,
+    gatewayRoundTripMs: Math.round((performance.now() - startedAt) * 1000) / 1000,
+    bridgeResponse
+  };
+}
+
+function mcpResult(envelope) {
+  const br = envelope?.bridgeResponse;
+  const payload = br?.ok ? br?.result : br?.error;
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify({
+        ok: Boolean(br?.ok),
+        bridgeId: envelope?.bridgeId,
+        gatewayRoundTripMs: envelope?.gatewayRoundTripMs,
+        executionMs: br?.executionMs,
+        result: br?.ok ? payload : undefined,
+        error: br?.ok ? undefined : payload
+      })
+    }],
+    isError: !br?.ok
+  };
+}
+
+function buildMcpServer() {
+  const mcp = new McpServer({
+    name: "AUTSYS PC BRIDGE",
+    version: VERSION
+  });
+
+  const readOnly = {
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false
+  };
+
+  mcp.registerTool(
+    "pc_health",
+    {
+      title: "PC Bridge Health",
+      description: "Legge lo stato reale di AUTSYS PC BRIDGE e del PC collegato.",
+      inputSchema: z.object({
+        bridgeId: z.string().optional().describe("Bridge specifico; omettere se ne e' connesso uno solo.")
+      }),
+      annotations: readOnly
+    },
+    async ({ bridgeId }) => mcpResult(await executeBridge("health", {}, bridgeId || ""))
+  );
+
+  mcp.registerTool(
+    "pc_fs_list",
+    {
+      title: "Elenca cartella AUTSYS",
+      description: "Elenca file e cartelle in sola lettura entro le radici autorizzate del PC.",
+      inputSchema: z.object({
+        path: z.string().min(1),
+        bridgeId: z.string().optional()
+      }),
+      annotations: readOnly
+    },
+    async ({ path, bridgeId }) => mcpResult(await executeBridge("fs.list", { path }, bridgeId || ""))
+  );
+
+  mcp.registerTool(
+    "pc_fs_read_text",
+    {
+      title: "Leggi file di testo AUTSYS",
+      description: "Legge in sola lettura un file di testo entro le radici autorizzate del PC.",
+      inputSchema: z.object({
+        path: z.string().min(1),
+        bridgeId: z.string().optional()
+      }),
+      annotations: readOnly
+    },
+    async ({ path, bridgeId }) => mcpResult(await executeBridge("fs.read_text", { path }, bridgeId || ""))
+  );
+
+  mcp.registerTool(
+    "pc_fs_find",
+    {
+      title: "Cerca file AUTSYS",
+      description: "Cerca ricorsivamente file e cartelle per pattern entro le radici autorizzate del PC.",
+      inputSchema: z.object({
+        path: z.string().min(1),
+        pattern: z.string().min(1),
+        bridgeId: z.string().optional()
+      }),
+      annotations: readOnly
+    },
+    async ({ path, pattern, bridgeId }) => mcpResult(await executeBridge("fs.find", { path, pattern }, bridgeId || ""))
+  );
+
+  return mcp;
+}
+
 app.get("/", (_req, res) => {
   res.json({
     ok: true,
     product: "AUTSYS PC BRIDGE GATEWAY",
-    version: "0.1.0.9",
+    version: VERSION,
+    mcp: "/mcp",
     utc: nowIso(),
     connectedBridges: [...bridges.values()]
       .filter(x => x.ws.readyState === WebSocket.OPEN).length
@@ -99,7 +245,7 @@ app.get("/", (_req, res) => {
 app.get("/api/status", requireControl, (_req, res) => {
   res.json({
     ok: true,
-    version: "0.1.0.9",
+    version: VERSION,
     utc: nowIso(),
     bridges: [...bridges.entries()].map(([bridgeId, item]) => ({
       bridgeId,
@@ -113,73 +259,52 @@ app.get("/api/status", requireControl, (_req, res) => {
 });
 
 app.post("/api/execute", requireControl, async (req, res) => {
-  const tool = String(req.body?.tool || "").trim();
-  if (!tool) {
-    return res.status(400).json({ ok: false, error: "tool is required" });
-  }
-
-  const requestId = String(req.body?.requestId || crypto.randomUUID());
-  if (pending.has(requestId)) {
-    return res.status(409).json({ ok: false, error: "requestId already in use" });
-  }
-
-  let bridge;
   try {
-    bridge = selectBridge(req.body?.bridgeId ? String(req.body.bridgeId) : "");
+    const result = await executeBridge(
+      req.body?.tool,
+      req.body?.arguments ?? {},
+      req.body?.bridgeId ? String(req.body.bridgeId) : "",
+      req.body?.requestId ? String(req.body.requestId) : ""
+    );
+    res.json(result);
   } catch (err) {
-    return res.status(503).json({ ok: false, error: String(err.message || err) });
+    const message = String(err?.message || err);
+    const status = message.includes("not connected") || message.includes("No Bridge") ? 503 :
+      message.includes("timeout") ? 504 : 400;
+    res.status(status).json({ ok: false, error: message });
   }
+});
 
-  const startedAt = performance.now();
+app.post("/mcp", requireControl, async (req, res) => {
+  const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: undefined,
+    enableJsonResponse: true
+  });
+
+  const mcp = buildMcpServer();
+
+  res.on("close", () => {
+    try { transport.close(); } catch {}
+    try { mcp.close(); } catch {}
+  });
 
   try {
-    const bridgeResponse = await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        pending.delete(requestId);
-        reject(new Error(`Bridge timeout after ${REQUEST_TIMEOUT_MS} ms`));
-      }, REQUEST_TIMEOUT_MS);
-
-      pending.set(requestId, {
-        resolve,
-        reject,
-        timeout,
-        startedAt,
-        bridgeId: bridge.bridgeId
+    await mcp.connect(transport);
+    await transport.handleRequest(req, res, req.body);
+  } catch (err) {
+    console.error("MCP error:", err?.message || err);
+    if (!res.headersSent) {
+      res.status(500).json({
+        jsonrpc: "2.0",
+        error: { code: -32603, message: "MCP internal error" },
+        id: null
       });
-
-      try {
-        sendJson(bridge.ws, {
-          type: "execute",
-          protocolVersion: "1",
-          requestId,
-          tool,
-          arguments: req.body?.arguments ?? {}
-        });
-      } catch (err) {
-        clearTimeout(timeout);
-        pending.delete(requestId);
-        reject(err);
-      }
-    });
-
-    const gatewayRoundTripMs =
-      Math.round((performance.now() - startedAt) * 1000) / 1000;
-
-    res.json({
-      ok: true,
-      requestId,
-      bridgeId: bridge.bridgeId,
-      gatewayRoundTripMs,
-      bridgeResponse
-    });
-  } catch (err) {
-    res.status(504).json({
-      ok: false,
-      requestId,
-      bridgeId: bridge.bridgeId,
-      error: String(err.message || err)
-    });
+    }
   }
+});
+
+app.get("/mcp", requireControl, (_req, res) => {
+  res.status(405).json({ ok: false, error: "Use POST /mcp (Streamable HTTP)." });
 });
 
 server.on("upgrade", (req, socket, head) => {
@@ -315,5 +440,6 @@ const heartbeatTimer = setInterval(() => {
 heartbeatTimer.unref();
 
 server.listen(PORT, "0.0.0.0", () => {
-  console.log(`AUTSYS PC BRIDGE GATEWAY 0.1.0.9 listening on ${PORT}`);
+  console.log(`AUTSYS PC BRIDGE GATEWAY ${VERSION} listening on ${PORT}`);
+  console.log("MCP endpoint ready at /mcp");
 });
