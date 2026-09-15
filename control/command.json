@@ -1,8 +1,8 @@
 {
-  "protocol": "1",
-  "requestId": "30075da3-8154-4cb1-9a78-3e3998e099cc",
-  "wrappedKey": "qSp6mTjmC6+VnJRekSGic9ElN6Kg3Wf/MMgLWxMNXjsJRB4S/bFPEKiHLWcDXtMQLUtA2/wrlUSR7knpqbXgMm75i0OQW+GmSDqBaUr4BEVqW1W2ztJCN05eNtXx7xaAky0UvUOljdZcH29lsmWiT+kFBN4gheZ7iattjxnquDyvjgtpg5Qhnm7qGZAuA5ridzgevqV1X4po1vs1l26p6zHKmtRwH9Te6JWZESfQTfiGXyRt7qKq4wVu3aXWrS7XF++eLo14wYBKhuABq3qit8FeEy6Fx45pmkdlB2VeVCErRG3agwkQPEPekah7qSrH21xpdvHCwt8TXXX9iarzuosjuuJjuMW1jSPiuT5CePuAnfXPtoBj6Lw5AeHoxzq3Gn67QFPnNRSTm618PZV4J6vUYc7q80nYVY/OYmXLR0EryeocZs1Co8HAXVBBSbCXeVhloBq2r8xrOQTINmUJ1L8YBw2PGwulFzi1TiXFDmmFtmTDqfeawuIzrlFjJTlm",
-  "iv": "OsMkyh34BlgtqUVT",
-  "tag": "1QjA4S5CQr7b4R7+RBEIcQ==",
-  "ciphertext": "udBMwaqXdFgBJ1NhxSd1VhbPNMK3e1dkEJYLZBZsVguYYtaDDscHVv8EoTNp6ayXVCjNAwsEQwQYUl1Q4R7AY6sLcvsFnB8YF09XlcoPQgQAsirzlw0xSx5Fr/ds/g1wOZob53CN1ZkalyMlRYapDexukbf0O4JEZKv4NWTjP5p8UernrflxifwEhD/TN7N/MMUeSV3aNYgeFcdLKaP3RJSNvNw="
+  "protocol": "chat-plain-v1",
+  "requestId": "1463fb58-03d5-42c2-b1d7-9dd0e44c28af",
+  "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
+  "tool": "health",
+  "arguments": {},
+  "expiresAt": "2026-09-15T22:50:05.153408Z"
 }
