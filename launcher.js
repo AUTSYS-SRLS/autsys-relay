@@ -43,5 +43,3 @@ const internalPort = String(process.env.GATEWAY_INTERNAL_PORT || 10001);
 
 start("gateway-backend", "server.js", { PORT: internalPort });
 start("front-gateway", "front-gateway.js", { PORT: publicPort, GATEWAY_INTERNAL_PORT: internalPort });
-start("chat-control", "control-worker.js", { PORT: internalPort });
-start("plain-chat-control", "plain-control-worker.js", { PORT: internalPort });
