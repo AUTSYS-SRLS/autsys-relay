@@ -1,170 +1,319 @@
-// AUTSYS Relay – DIAGNOSTIC SAFE (MSG_ID FIX)
-// In-memory queues + /diag
-// Endpoints:
-// - GET  /            health
-// - GET  /diag        counts + last ok timestamps + last error
-// - POST /mobile      enqueue Freja->Roberta
-// - GET  /roberta     dequeue Freja->Roberta
-// - POST /roberta     enqueue Roberta->Freja
-// - GET  /mobile      dequeue Roberta->Freja
-//
-// IMPORTANT: outbox items ALWAYS carry msg_id so Freja can correlate.
-// Also: permissive CORS for iOS apps.
-
 import express from "express";
+import http from "http";
+import crypto from "crypto";
+import { WebSocketServer, WebSocket } from "ws";
+
+const PORT = Number(process.env.PORT || 10000);
+const BRIDGE_TOKEN = process.env.BRIDGE_TOKEN || "";
+const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
+const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 20000);
+const MAX_JSON_BYTES = Number(process.env.MAX_JSON_BYTES || 2 * 1024 * 1024);
+
+if (!BRIDGE_TOKEN || !CONTROL_TOKEN) {
+  console.error("Missing BRIDGE_TOKEN or CONTROL_TOKEN");
+  process.exit(1);
+}
 
 const app = express();
-const port = process.env.PORT || 10010;
+app.disable("x-powered-by");
+app.use(express.json({ limit: MAX_JSON_BYTES }));
 
-app.use(express.json({ limit: "1mb" }));
+const server = http.createServer(app);
+const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_JSON_BYTES });
 
-// CORS (iOS-friendly)
-app.use((req, res, next) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  if (req.method === "OPTIONS") return res.status(200).end();
+const bridges = new Map();
+const pending = new Map();
+
+const nowIso = () => new Date().toISOString();
+
+function bearer(req) {
+  const raw = String(req.headers.authorization || "");
+  return raw.startsWith("Bearer ") ? raw.slice(7) : "";
+}
+
+function safeEqual(a, b) {
+  const ba = Buffer.from(String(a));
+  const bb = Buffer.from(String(b));
+  return ba.length === bb.length && crypto.timingSafeEqual(ba, bb);
+}
+
+function requireControl(req, res, next) {
+  if (!safeEqual(bearer(req), CONTROL_TOKEN)) {
+    return res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
+  }
   next();
-});
+}
 
-// --------------------
-// In-memory queues
-// --------------------
-const inbox = [];  // Freja -> Roberta : { ts, msg_id, state, message, source }
-const outbox = []; // Roberta -> Freja : { ts, msg_id, text }
+function sendJson(ws, obj) {
+  if (ws.readyState !== WebSocket.OPEN) {
+    throw new Error("Bridge WebSocket is not open.");
+  }
+  ws.send(JSON.stringify(obj));
+}
 
-// --------------------
-// Diagnostics
-// --------------------
-const nowTs = () => Math.floor(Date.now() / 1000);
+function rejectPendingForBridge(bridgeId, reason) {
+  for (const [requestId, item] of pending.entries()) {
+    if (item.bridgeId === bridgeId) {
+      clearTimeout(item.timeout);
+      pending.delete(requestId);
+      item.reject(new Error(reason));
+    }
+  }
+}
 
-let lastEnqueueInboxOkTs = 0;
-let lastEnqueueOutboxOkTs = 0;
-let lastDequeueInboxOkTs = 0;
-let lastDequeueOutboxOkTs = 0;
-let lastError = null;
+function selectBridge(requestedBridgeId) {
+  if (requestedBridgeId) {
+    const item = bridges.get(requestedBridgeId);
+    if (!item || item.ws.readyState !== WebSocket.OPEN) {
+      throw new Error(`Bridge not connected: ${requestedBridgeId}`);
+    }
+    return { bridgeId: requestedBridgeId, ...item };
+  }
 
-// --------------------
-// Health
-// --------------------
-app.get("/", (req, res) => {
-  return res.json({ ok: true, ts: nowTs() });
-});
+  const open = [...bridges.entries()]
+    .filter(([, item]) => item.ws.readyState === WebSocket.OPEN);
 
-// --------------------
-// Diag
-// --------------------
-app.get("/diag", (req, res) => {
-  return res.json({
+  if (open.length !== 1) {
+    throw new Error(
+      open.length === 0
+        ? "No Bridge connected."
+        : "Multiple Bridges connected: bridgeId is required."
+    );
+  }
+
+  const [bridgeId, item] = open[0];
+  return { bridgeId, ...item };
+}
+
+app.get("/", (_req, res) => {
+  res.json({
     ok: true,
-    ts: nowTs(),
-    inbox_len: inbox.length,
-    outbox_len: outbox.length,
-    lastEnqueueInboxOkTs,
-    lastEnqueueOutboxOkTs,
-    lastDequeueInboxOkTs,
-    lastDequeueOutboxOkTs,
-    lastError
+    product: "AUTSYS PC BRIDGE GATEWAY",
+    version: "0.1.0.9",
+    utc: nowIso(),
+    connectedBridges: [...bridges.values()]
+      .filter(x => x.ws.readyState === WebSocket.OPEN).length
   });
 });
 
-// --------------------
-// Freja -> Relay (enqueue)
-//
-// Body: { source, msg_id, state, message }
-// --------------------
-app.post("/mobile", (req, res) => {
-  try {
-    const source = String(req.body?.source ?? "freja_app");
-    let msg_id = String(req.body?.msg_id ?? "").trim();
-    const state = String(req.body?.state ?? "DA_RISPONDERE");
-    const message = String(req.body?.message ?? "");
-    const tsIn = req.body?.ts;
-    const tsVal = Number.isFinite(tsIn) ? Number(tsIn) : nowTs();
-    if (!msg_id) {
-      msg_id = `${tsVal}_${Math.random().toString(16).slice(2)}_${Math.random().toString(16).slice(2)}`;
-    }
-    if (message.trim().length > 0) {
-      inbox.push({ ts: tsVal, msg_id, state, message, source });
-      lastEnqueueInboxOkTs = nowTs();
-    }
-    return res.json({ ok: true, msg_id });
-  } catch (e) {
-    lastError = { ts: nowTs(), where: "POST /mobile", err: String(e) };
-    return res.json({ ok: true, msg_id: "" });
+app.get("/api/status", requireControl, (_req, res) => {
+  res.json({
+    ok: true,
+    version: "0.1.0.9",
+    utc: nowIso(),
+    bridges: [...bridges.entries()].map(([bridgeId, item]) => ({
+      bridgeId,
+      connected: item.ws.readyState === WebSocket.OPEN,
+      connectedAt: item.connectedAt,
+      lastSeenAt: item.lastSeenAt,
+      meta: item.meta
+    })),
+    pendingRequests: pending.size
+  });
+});
+
+app.post("/api/execute", requireControl, async (req, res) => {
+  const tool = String(req.body?.tool || "").trim();
+  if (!tool) {
+    return res.status(400).json({ ok: false, error: "tool is required" });
   }
-});// --------------------
-// Roberta <- Relay (dequeue)
-//
-// Returns:
-// - { status: "empty" } if none
-// - { msg_id, state, message, ts } if present
-// --------------------
-app.get("/roberta", (req, res) => {
+
+  const requestId = String(req.body?.requestId || crypto.randomUUID());
+  if (pending.has(requestId)) {
+    return res.status(409).json({ ok: false, error: "requestId already in use" });
+  }
+
+  let bridge;
   try {
-    if (inbox.length === 0) return res.json({ status: "empty" });
+    bridge = selectBridge(req.body?.bridgeId ? String(req.body.bridgeId) : "");
+  } catch (err) {
+    return res.status(503).json({ ok: false, error: String(err.message || err) });
+  }
 
-    const item = inbox.shift();
-    lastDequeueInboxOkTs = nowTs();
+  const startedAt = performance.now();
 
-    return res.json({
-      msg_id: item.msg_id ?? "",
-      state: item.state ?? "DA_RISPONDERE",
-      message: item.message ?? "",
-      ts: item.ts ?? nowTs()
+  try {
+    const bridgeResponse = await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        pending.delete(requestId);
+        reject(new Error(`Bridge timeout after ${REQUEST_TIMEOUT_MS} ms`));
+      }, REQUEST_TIMEOUT_MS);
+
+      pending.set(requestId, {
+        resolve,
+        reject,
+        timeout,
+        startedAt,
+        bridgeId: bridge.bridgeId
+      });
+
+      try {
+        sendJson(bridge.ws, {
+          type: "execute",
+          protocolVersion: "1",
+          requestId,
+          tool,
+          arguments: req.body?.arguments ?? {}
+        });
+      } catch (err) {
+        clearTimeout(timeout);
+        pending.delete(requestId);
+        reject(err);
+      }
     });
-  } catch (e) {
-    lastError = { ts: nowTs(), where: "GET /roberta", err: String(e) };
-    return res.json({ status: "empty" });
+
+    const gatewayRoundTripMs =
+      Math.round((performance.now() - startedAt) * 1000) / 1000;
+
+    res.json({
+      ok: true,
+      requestId,
+      bridgeId: bridge.bridgeId,
+      gatewayRoundTripMs,
+      bridgeResponse
+    });
+  } catch (err) {
+    res.status(504).json({
+      ok: false,
+      requestId,
+      bridgeId: bridge.bridgeId,
+      error: String(err.message || err)
+    });
   }
 });
 
-// --------------------
-// Roberta -> Relay (enqueue)
-//
-// Body: { text, msg_id }
-// NOTE: msg_id is required for correct correlation. If missing, we still enqueue with "".
-// --------------------
-app.post("/roberta", (req, res) => {
+server.on("upgrade", (req, socket, head) => {
+  let pathname = "";
   try {
-    const text = String(req.body?.text ?? "");
-    const msg_id = String(req.body?.msg_id ?? "").trim();
+    pathname = new URL(req.url || "/", "http://localhost").pathname;
+  } catch {
+    socket.destroy();
+    return;
+  }
 
-    if (text.trim().length > 0) {
-      outbox.push({ ts: nowTs(), msg_id, text });
-      lastEnqueueOutboxOkTs = nowTs();
+  if (pathname !== "/bridge") {
+    socket.destroy();
+    return;
+  }
+
+  if (!safeEqual(bearer(req), BRIDGE_TOKEN)) {
+    socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+    socket.destroy();
+    return;
+  }
+
+  wss.handleUpgrade(req, socket, head, ws => {
+    wss.emit("connection", ws, req);
+  });
+});
+
+wss.on("connection", ws => {
+  ws.isAlive = true;
+  ws.bridgeId = null;
+
+  ws.on("pong", () => {
+    ws.isAlive = true;
+    if (ws.bridgeId && bridges.has(ws.bridgeId)) {
+      bridges.get(ws.bridgeId).lastSeenAt = nowIso();
+    }
+  });
+
+  ws.on("message", data => {
+    let msg;
+    try {
+      msg = JSON.parse(data.toString("utf8"));
+    } catch {
+      return;
     }
 
-    return res.json({ ok: true });
-  } catch (e) {
-    lastError = { ts: nowTs(), where: "POST /roberta", err: String(e) };
-    return res.json({ ok: true });
-  }
+    if (msg?.type === "hello") {
+      const bridgeId = String(msg.bridgeId || "").trim();
+      if (!bridgeId) {
+        ws.close(1008, "bridgeId required");
+        return;
+      }
+
+      const previous = bridges.get(bridgeId);
+      if (previous?.ws && previous.ws !== ws) {
+        try { previous.ws.close(1012, "Replaced by newer connection"); } catch {}
+      }
+
+      ws.bridgeId = bridgeId;
+      bridges.set(bridgeId, {
+        ws,
+        connectedAt: nowIso(),
+        lastSeenAt: nowIso(),
+        meta: {
+          product: msg.product || null,
+          version: msg.version || null,
+          machineName: msg.machineName || null,
+          protocolVersion: msg.protocolVersion || null
+        }
+      });
+
+      console.log(`Bridge connected: ${bridgeId} ${msg.version || ""}`);
+      return;
+    }
+
+    if (msg?.type === "heartbeat" || msg?.type === "pong") {
+      if (ws.bridgeId && bridges.has(ws.bridgeId)) {
+        bridges.get(ws.bridgeId).lastSeenAt = nowIso();
+      }
+      return;
+    }
+
+    if (msg?.type === "result") {
+      const requestId = String(msg.requestId || "");
+      const waiter = pending.get(requestId);
+      if (!waiter) return;
+
+      clearTimeout(waiter.timeout);
+      pending.delete(requestId);
+      waiter.resolve(msg);
+
+      if (ws.bridgeId && bridges.has(ws.bridgeId)) {
+        bridges.get(ws.bridgeId).lastSeenAt = nowIso();
+      }
+    }
+  });
+
+  ws.on("close", () => {
+    const bridgeId = ws.bridgeId;
+    if (bridgeId && bridges.get(bridgeId)?.ws === ws) {
+      bridges.delete(bridgeId);
+      rejectPendingForBridge(bridgeId, "Bridge disconnected.");
+      console.log(`Bridge disconnected: ${bridgeId}`);
+    }
+  });
+
+  ws.on("error", err => {
+    console.error("Bridge WebSocket error:", err.message);
+  });
 });
 
-// --------------------
-// Freja <- Relay (dequeue)
-//
-// Returns:
-// - { status: "empty" } if none
-// - { text, msg_id, ts } if present
-// --------------------
-app.get("/mobile", (req, res) => {
-  try {
-    if (outbox.length === 0) return res.json({ status: "empty" });
+const heartbeatTimer = setInterval(() => {
+  for (const [bridgeId, item] of bridges.entries()) {
+    const ws = item.ws;
+    if (ws.readyState !== WebSocket.OPEN) {
+      bridges.delete(bridgeId);
+      rejectPendingForBridge(bridgeId, "Bridge socket closed.");
+      continue;
+    }
 
-    const item = outbox.shift();
-    lastDequeueOutboxOkTs = nowTs();
+    if (ws.isAlive === false) {
+      ws.terminate();
+      bridges.delete(bridgeId);
+      rejectPendingForBridge(bridgeId, "Bridge heartbeat timeout.");
+      continue;
+    }
 
-    return res.json({
-      text: item.text ?? "",
-      msg_id: item.msg_id ?? "",
-      ts: item.ts ?? nowTs()
-    });
-  } catch (e) {
-    lastError = { ts: nowTs(), where: "GET /mobile", err: String(e) };
-    return res.json({ status: "empty" });
+    ws.isAlive = false;
+    try { ws.ping(); } catch {}
   }
-});
+}, 20000);
 
-app.listen(port, () => {});
+heartbeatTimer.unref();
+
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`AUTSYS PC BRIDGE GATEWAY 0.1.0.9 listening on ${PORT}`);
+});
