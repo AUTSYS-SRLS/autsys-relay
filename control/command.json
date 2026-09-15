@@ -1,5 +1,8 @@
 {
   "protocol": "1",
-  "requestId": "IDLE",
-  "state": "idle"
+  "requestId": "54f68c72-9f91-4e3f-a386-485b2e287390",
+  "wrappedKey": "5pn9GidOliupZaM4Ozuwcw1nRqVtAh/BgEMRslOMMM9AyI92fdm6Pa2tx7N2Qy109+7/E1t3vrV9KXGaRz5LJRileW878zwyfuWTyWPvfO2E4hwqIAT6O+huv+GLj5b7h9zkrazZGYH9eP+LZUU+Qk6xIxqOcSoaY1qYMwAjgECCDBr3gCFRiIvppBeiZLZ2SHyQblTzuZUU1EbBHL8WiLM567seTcwtjtOpmzP/OjzqPIWRGtWN49ErSQUh8X74ZJUoUmDLHTncaCQl3/Frn9qLaD3g2tYLwfUiensXgE/0a1lRDHPfCj9rg6OGVO2Ci72PuZmcJ2UxxlPl3QYSkJWucbnbUt92FSJL5dJXWmSWHtIB4zum/wvV9KT71VpwxMzsZXPFXCkOYM82R7/E8rYSzWwi1Wsbst/zi/e7QUS+Ikeiu/d4WlxyooKpSOJplYwgTT/FHLe+ozWbulFvBLCOID7IsKxYvjv4JLaZm+ZaYhMqRD4NvH7AeYQ93v+K",
+  "iv": "O/Y9Ztja+cXcBY+Y",
+  "tag": "+8pWQamBT89676hqPpFcoQ==",
+  "ciphertext": "8gPReW+G7drGGVDFcSJ/14twigVmRBt/ugwNUQ1OGsdQ1u6/10CMv25UiEzflcBTlfrS+s5YSQppPGC0ckWCA572GoMJPwpZvOwNw8pqKsa/YQ+j4BF57vFtqOeqCQFNaIBfi7lGuyX2u0WqiVaJ843+4hvvHm4x6B9ixhxANjb39kOzs571C3Sk+5qW1Rb2QezqWmPdA+8V1HwjxSNRSpccclk="
 }
