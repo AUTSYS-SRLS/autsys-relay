@@ -22,9 +22,9 @@ const privateKey = crypto.createPrivateKey(
   Buffer.from(PRIVATE_KEY_B64, "base64").toString("utf8")
 );
 
-let etag = "";
 let polling = false;
 let lastError = "";
+let lastObservedRequestId = "";
 const processed = new Set();
 
 function decryptEnvelope(envelope) {
@@ -100,6 +100,12 @@ async function executeLocal(command) {
 async function processEnvelope(envelope) {
   const requestId = String(envelope?.requestId || "").trim();
   if (!requestId || requestId === "IDLE" || envelope?.state === "idle") return;
+
+  if (requestId !== lastObservedRequestId) {
+    console.log(`CHAT_CONTROL observed ${requestId}`);
+    lastObservedRequestId = requestId;
+  }
+
   if (processed.has(requestId)) return;
 
   processed.add(requestId);
@@ -148,20 +154,18 @@ async function poll() {
   if (polling) return;
   polling = true;
   try {
-    const headers = {
-      "user-agent": "AUTSYS-PC-BRIDGE-CONTROL/0.1.0.1",
-      "cache-control": "no-cache"
-    };
-    if (etag) headers["if-none-match"] = etag;
+    const separator = CONTROL_URL.includes("?") ? "&" : "?";
+    const fetchUrl = `${CONTROL_URL}${separator}cb=${Date.now()}`;
+    const response = await fetch(fetchUrl, {
+      headers: {
+        "user-agent": "AUTSYS-PC-BRIDGE-CONTROL/0.1.0.2",
+        "cache-control": "no-cache, no-store"
+      },
+      cache: "no-store"
+    });
 
-    const response = await fetch(CONTROL_URL, { headers, cache: "no-store" });
-    if (response.status === 304) {
-      lastError = "";
-      return;
-    }
     if (!response.ok) throw new Error(`GitHub control HTTP ${response.status}`);
 
-    etag = response.headers.get("etag") || etag;
     const envelope = await response.json();
     await processEnvelope(envelope);
     lastError = "";
@@ -176,7 +180,7 @@ async function poll() {
   }
 }
 
-console.log(`AUTSYS PC BRIDGE CHAT CONTROL 0.1.0.1 active; poll=${POLL_MS}ms`);
+console.log(`AUTSYS PC BRIDGE CHAT CONTROL 0.1.0.2 active; poll=${POLL_MS}ms`);
 setInterval(poll, POLL_MS).unref();
 setTimeout(poll, 500);
 
