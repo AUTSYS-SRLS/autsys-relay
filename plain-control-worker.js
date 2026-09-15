@@ -1,7 +1,7 @@
 const PORT = Number(process.env.PORT || 10000);
 const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
-const CONTROL_API_URL = "https://api.github.com/repos/AUTSYS-SRLS/autsys-relay/contents/control/command.json?ref=pc-bridge-control";
-const POLL_MS = Math.max(5000, Number(process.env.CHAT_POLL_MS || 5000));
+const CONTROL_RAW_URL = "https://raw.githubusercontent.com/AUTSYS-SRLS/autsys-relay/pc-bridge-control/control/command.json";
+const POLL_MS = Math.max(1000, Number(process.env.CHAT_POLL_MS || 1500));
 
 const ALLOWED_TOOLS = new Set(["health", "fs.list", "fs.read_text", "fs.find"]);
 
@@ -10,9 +10,9 @@ if (!CONTROL_TOKEN) {
   process.exit(1);
 }
 
-let etag = "";
 let polling = false;
 let lastRequestId = "";
+let lastError = "";
 
 async function executeLocal(command) {
   const response = await fetch(`http://127.0.0.1:${PORT}/api/execute`, {
@@ -75,36 +75,35 @@ async function poll() {
   if (polling) return;
   polling = true;
   try {
-    const headers = {
-      accept: "application/vnd.github+json",
-      "x-github-api-version": "2022-11-28",
-      "user-agent": "AUTSYS-PC-BRIDGE-PLAIN-CONTROL/0.1.0.1"
-    };
-    if (etag) headers["if-none-match"] = etag;
-
-    const response = await fetch(CONTROL_API_URL, {
-      headers,
+    const url = `${CONTROL_RAW_URL}?cb=${Date.now()}`;
+    const response = await fetch(url, {
+      headers: {
+        "cache-control": "no-cache, no-store, max-age=0",
+        pragma: "no-cache",
+        "user-agent": "AUTSYS-PC-BRIDGE-PLAIN-CONTROL/0.1.0.2"
+      },
       signal: AbortSignal.timeout(5000)
     });
 
-    if (response.status === 304) return;
-    if (!response.ok) throw new Error(`GitHub control HTTP ${response.status}`);
+    if (!response.ok) throw new Error(`GitHub raw control HTTP ${response.status}`);
+    const text = await response.text();
+    if (!text || text.length > 65536) throw new Error("Invalid GitHub raw control payload size");
 
-    etag = response.headers.get("etag") || etag;
-    const apiPayload = await response.json();
-    const encoded = String(apiPayload?.content || "").replace(/\s+/g, "");
-    if (!encoded) return;
-
-    const command = JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
+    const command = JSON.parse(text);
     await processCommand(command);
+    lastError = "";
   } catch (err) {
-    console.error(`PLAIN_CHAT_CONTROL poll error: ${String(err?.message || err)}`);
+    const message = String(err?.message || err);
+    if (message !== lastError) {
+      console.error(`PLAIN_CHAT_CONTROL poll error: ${message}`);
+      lastError = message;
+    }
   } finally {
     polling = false;
   }
 }
 
-console.log(`AUTSYS PC BRIDGE PLAIN CHAT CONTROL active; poll=${POLL_MS}ms`);
+console.log(`AUTSYS PC BRIDGE PLAIN CHAT CONTROL 0.1.0.2 active; poll=${POLL_MS}ms; source=raw`);
 setInterval(poll, POLL_MS).unref();
-setTimeout(poll, 1000);
+setTimeout(poll, 300);
 setInterval(() => {}, 60000);
