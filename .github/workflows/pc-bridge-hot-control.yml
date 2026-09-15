@@ -1,0 +1,30 @@
+name: PC Bridge Hot Control
+
+on:
+  push:
+    branches:
+      - pc-bridge-control
+    paths:
+      - control/command.json
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Checkout control command
+        uses: actions/checkout@v4
+
+      - name: Dispatch command to AUTSYS PC Bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          request_id="$(python3 -c 'import json; print(json.load(open("control/command.json", encoding="utf-8"))["requestId"])')"
+          echo "PC_BRIDGE_REQUEST_ID=${request_id}"
+          curl --fail-with-body --silent --show-error \
+            --max-time 30 \
+            "https://autsys-pc-bridge-gateway.onrender.com/chat-control/pull?commit=${GITHUB_SHA}&requestId=${request_id}"
+          echo
