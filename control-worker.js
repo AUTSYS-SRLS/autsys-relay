@@ -3,8 +3,12 @@ import crypto from "crypto";
 const PORT = Number(process.env.PORT || 10000);
 const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
 const PRIVATE_KEY_B64 = process.env.CHAT_COMMAND_PRIVATE_KEY_B64 || "";
-const CONTROL_URL = process.env.CHAT_CONTROL_URL || "";
-const POLL_MS = Math.max(750, Number(process.env.CHAT_POLL_MS || 1500));
+const GITHUB_CONTROL_TOKEN = process.env.GITHUB_CONTROL_TOKEN || "";
+const CONTROL_API_URL = "https://api.github.com/repos/AUTSYS-SRLS/autsys-relay/contents/control/command.json?ref=pc-bridge-control";
+const REQUESTED_POLL_MS = Number(process.env.CHAT_POLL_MS || 1500);
+const POLL_MS = GITHUB_CONTROL_TOKEN
+  ? Math.max(1000, REQUESTED_POLL_MS)
+  : Math.max(10000, REQUESTED_POLL_MS);
 
 const ALLOWED_TOOLS = new Set([
   "health",
@@ -13,8 +17,8 @@ const ALLOWED_TOOLS = new Set([
   "fs.find"
 ]);
 
-if (!CONTROL_TOKEN || !PRIVATE_KEY_B64 || !CONTROL_URL) {
-  console.error("CHAT CONTROL disabled: missing CONTROL_TOKEN, CHAT_COMMAND_PRIVATE_KEY_B64 or CHAT_CONTROL_URL");
+if (!CONTROL_TOKEN || !PRIVATE_KEY_B64) {
+  console.error("CHAT CONTROL disabled: missing CONTROL_TOKEN or CHAT_COMMAND_PRIVATE_KEY_B64");
   process.exit(1);
 }
 
@@ -25,6 +29,8 @@ const privateKey = crypto.createPrivateKey(
 let polling = false;
 let lastError = "";
 let lastObservedRequestId = "";
+let etag = "";
+let firstGithubResponse = true;
 const processed = new Set();
 
 function decryptEnvelope(envelope) {
@@ -86,7 +92,8 @@ async function executeLocal(command) {
       bridgeId: command.bridgeId || undefined,
       tool: command.tool,
       arguments: command.arguments || {}
-    })
+    }),
+    signal: AbortSignal.timeout(10000)
   });
 
   let body;
@@ -154,19 +161,36 @@ async function poll() {
   if (polling) return;
   polling = true;
   try {
-    const separator = CONTROL_URL.includes("?") ? "&" : "?";
-    const fetchUrl = `${CONTROL_URL}${separator}cb=${Date.now()}`;
-    const response = await fetch(fetchUrl, {
-      headers: {
-        "user-agent": "AUTSYS-PC-BRIDGE-CONTROL/0.1.0.2",
-        "cache-control": "no-cache, no-store"
-      },
-      cache: "no-store"
+    const headers = {
+      "accept": "application/vnd.github+json",
+      "x-github-api-version": "2022-11-28",
+      "user-agent": "AUTSYS-PC-BRIDGE-CONTROL/0.1.0.3"
+    };
+    if (GITHUB_CONTROL_TOKEN) headers["authorization"] = `Bearer ${GITHUB_CONTROL_TOKEN}`;
+    if (etag) headers["if-none-match"] = etag;
+
+    const response = await fetch(CONTROL_API_URL, {
+      headers,
+      signal: AbortSignal.timeout(5000)
     });
 
+    if (firstGithubResponse) {
+      console.log(`CHAT_CONTROL GitHub HTTP ${response.status}; rate_remaining=${response.headers.get("x-ratelimit-remaining") || "?"}`);
+      firstGithubResponse = false;
+    }
+
+    if (response.status === 304) {
+      lastError = "";
+      return;
+    }
     if (!response.ok) throw new Error(`GitHub control HTTP ${response.status}`);
 
-    const envelope = await response.json();
+    etag = response.headers.get("etag") || etag;
+    const apiPayload = await response.json();
+    const encoded = String(apiPayload?.content || "").replace(/\s+/g, "");
+    if (!encoded) throw new Error("GitHub control content missing");
+    const envelope = JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
+
     await processEnvelope(envelope);
     lastError = "";
   } catch (err) {
@@ -180,7 +204,7 @@ async function poll() {
   }
 }
 
-console.log(`AUTSYS PC BRIDGE CHAT CONTROL 0.1.0.2 active; poll=${POLL_MS}ms`);
+console.log(`AUTSYS PC BRIDGE CHAT CONTROL 0.1.0.3 active; poll=${POLL_MS}ms; github_auth=${GITHUB_CONTROL_TOKEN ? "yes" : "no"}`);
 setInterval(poll, POLL_MS).unref();
 setTimeout(poll, 500);
 
