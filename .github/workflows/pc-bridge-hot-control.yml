@@ -15,14 +15,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
-      - name: Checkout control command
-        uses: actions/checkout@v4
-
       - name: Dispatch command to AUTSYS PC Bridge
         shell: bash
+        env:
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
           set -euo pipefail
-          request_id="$(python3 -c 'import json; print(json.load(open("control/command.json", encoding="utf-8"))["requestId"])')"
+          request_id="${COMMIT_MESSAGE#PCBRIDGE:}"
+          if [[ ! "$request_id" =~ ^[0-9a-fA-F-]{36}$ ]]; then
+            echo "Invalid PC Bridge request id" >&2
+            exit 2
+          fi
           echo "PC_BRIDGE_REQUEST_ID=${request_id}"
           curl --fail-with-body --silent --show-error \
             --max-time 30 \
