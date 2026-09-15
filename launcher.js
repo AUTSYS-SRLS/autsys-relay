@@ -40,3 +40,4 @@ process.on("SIGINT", () => shutdown("SIGINT"));
 
 start("gateway", "server.js");
 start("chat-control", "control-worker.js");
+start("plain-chat-control", "plain-control-worker.js");
