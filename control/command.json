@@ -1,10 +1,10 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "bfb7474c-46c5-4a0e-a281-bd423eeecfcc",
+  "requestId": "40a28b55-3250-439f-a173-d0bfc0f03637",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
   "tool": "pg.roberta.query",
   "arguments": {
-    "sql": "SELECT has_table_privilege('autsys_pc_bridge_migrator','public.autsys_project_registry','SELECT') AS can_select, has_table_privilege('autsys_pc_bridge_migrator','public.autsys_project_registry','INSERT') AS can_insert, has_table_privilege('autsys_pc_bridge_migrator','public.autsys_project_registry','UPDATE') AS can_update, has_sequence_privilege('autsys_pc_bridge_migrator','public.autsys_project_registry_id_seq','USAGE') AS can_sequence;"
+    "sql": "SELECT indexname,indexdef FROM pg_indexes WHERE schemaname='public' AND tablename='autsys_project_registry' ORDER BY indexname;"
   },
-  "expiresAt": "2026-09-16T16:47:00Z"
+  "expiresAt": "2026-09-16T16:48:00Z"
 }
