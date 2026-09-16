@@ -1,10 +1,10 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "bd7d9d32-88c8-4ed7-8249-8a7d97ba7ed5",
+  "requestId": "204b337f-8fe7-43c7-8a8c-56ce3a6bc93e",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
   "tool": "pg.roberta.query",
   "arguments": {
-    "sql": "SELECT c.relname AS table_name,a.attnum AS ordinal,a.attname AS column_name,pg_catalog.format_type(a.atttypid,a.atttypmod) AS data_type FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid=a.attrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname IN ('autsys_project_registry','autsys_project_data_sources','autsys_external_capabilities_registry','plugin_registry_server','plugin_capabilities_server') AND a.attnum>0 AND NOT a.attisdropped ORDER BY c.relname,a.attnum;"
+    "sql": "SELECT * FROM public.autsys_project_registry ORDER BY created_at LIMIT 20;"
   },
-  "expiresAt": "2026-09-16T14:33:00Z"
+  "expiresAt": "2026-09-16T14:34:00Z"
 }
