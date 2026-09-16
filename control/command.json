@@ -1,10 +1,10 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "d2077628-3c29-4ad2-9c7a-c18eb61ec310",
+  "requestId": "d2c4df8d-8be2-4d0e-9d6e-ea356085fb49",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
   "tool": "pg.roberta.query",
   "arguments": {
-    "sql": "SELECT plugin_key,plugin_name,file_name,relative_path,module_name,class_name,function_name,execution_mode,runner_type,entrypoint_type,requires_bridge,requires_worker,is_active,is_available,is_approved_global,risk_level,trust_level FROM public.plugin_registry_server WHERE plugin_key='plugin_database_manager';"
+    "sql": "SELECT encode(convert_to(COALESCE(description_text,''),'UTF8'),'base64') AS description_b64, encode(convert_to(COALESCE(input_schema_json::text,''),'UTF8'),'base64') AS input_schema_b64, encode(convert_to(COALESCE(output_schema_json::text,''),'UTF8'),'base64') AS output_schema_b64, encode(convert_to(COALESCE(policy_json::text,''),'UTF8'),'base64') AS policy_b64, encode(convert_to(COALESCE(metadata_json::text,''),'UTF8'),'base64') AS metadata_b64 FROM public.plugin_registry_server WHERE plugin_key='plugin_database_manager';"
   },
-  "expiresAt": "2026-09-16T15:27:00Z"
+  "expiresAt": "2026-09-16T15:29:00Z"
 }
