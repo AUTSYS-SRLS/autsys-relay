@@ -7,7 +7,7 @@ const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
 const REPO_RAW_BASE = "https://raw.githubusercontent.com/AUTSYS-SRLS/autsys-relay";
 const CONTROL_PATH = "control/command.json";
 const MAX_CONTROL_BYTES = 262144;
-const ALLOWED_TOOLS = new Set(["health", "fs.list", "fs.read_text", "fs.find", "fs.write_text", "fs.delete"]);
+const ALLOWED_TOOLS = new Set(["health", "fs.list", "fs.read_text", "fs.find", "fs.write_text", "fs.delete", "pg.roberta.query", "pg.roberta.migrate"]);
 const processed = new Set();
 
 if (!CONTROL_TOKEN) {
