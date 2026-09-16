@@ -1,10 +1,10 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "3f1e6ca2-85a6-43d7-94f6-3fe42ddc2bd2",
+  "requestId": "59e4804e-6a95-4124-8f1b-7f7d8a2e21d5",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
   "tool": "pg.roberta.query",
   "arguments": {
-    "sql": "SELECT table_name, json_agg(column_name ORDER BY ordinal_position) AS columns FROM information_schema.columns WHERE table_schema='public' AND (table_name LIKE 'autsys_%' OR table_name LIKE 'plugin_%' OR table_name IN ('program_runtime_registry','system_modules_registry','system_runtime_registry')) GROUP BY table_name ORDER BY table_name;"
+    "sql": "SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname='public' AND (tablename LIKE 'autsys_%' OR tablename LIKE 'plugin_%' OR tablename IN ('program_runtime_registry','system_modules_registry','system_runtime_registry')) ORDER BY tablename;"
   },
-  "expiresAt": "2026-09-16T14:30:00Z"
+  "expiresAt": "2026-09-16T14:31:00Z"
 }
