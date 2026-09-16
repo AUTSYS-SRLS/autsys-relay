@@ -1,10 +1,10 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "08de7a2b-4d76-4397-b436-40876a8e5f21",
+  "requestId": "6cf5422d-85f1-4a47-ae57-7262b40798e1",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
   "tool": "pg.roberta.query",
   "arguments": {
-    "sql": "SELECT n.nspname AS schema_name,p.proname,pg_get_function_identity_arguments(p.oid) AS args,p.prokind,p.prosecdef FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' ORDER BY p.proname LIMIT 100;"
+    "sql": "SELECT count(*)::int AS function_count, string_agg(p.proname, ',' ORDER BY p.proname) AS function_names FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public';"
   },
-  "expiresAt": "2026-09-16T16:44:00Z"
+  "expiresAt": "2026-09-16T16:45:00Z"
 }
