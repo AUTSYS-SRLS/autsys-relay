@@ -64,74 +64,40 @@ function buildSessionBootstrapSql(args = {}) {
 
   const projectKey = normalizeProjectKey(projectName);
   const projectWhere = scope === "PROJECT"
-    ? `WHERE lower(p.display_name)=lower(${sqlLiteral(projectName)}) OR p.project_key=${sqlLiteral(projectKey)}`
-    : "WHERE false";
+    ? `lower(p.display_name)=lower(${sqlLiteral(projectName)}) OR p.project_key=${sqlLiteral(projectKey)}`
+    : "false";
 
   return `
-SELECT row_kind,provider_key,capability_key,type_or_kind,level_or_status,risk_level,requires_approval,extra_state
-FROM (
-  SELECT
-    0 AS sort_order,
-    'SESSION'::text AS row_kind,
-    'CHATGPT'::text AS provider_key,
-    ${sqlLiteral(scope)}::text AS capability_key,
-    'SESSION_SCOPE'::text AS type_or_kind,
-    'active'::text AS level_or_status,
-    NULL::text AS risk_level,
-    NULL::text AS requires_approval,
-    NULL::text AS extra_state
-
-  UNION ALL
-
-  SELECT
-    1 AS sort_order,
-    'PROJECT'::text AS row_kind,
-    'PROJECT_REGISTRY'::text AS provider_key,
-    p.project_key::text AS capability_key,
-    p.entity_kind::text AS type_or_kind,
-    p.lifecycle_status::text AS level_or_status,
-    NULL::text AS risk_level,
-    NULL::text AS requires_approval,
-    p.is_authoritative::text AS extra_state
-  FROM public.autsys_project_registry p
-  ${projectWhere}
-
-  UNION ALL
-
-  SELECT
-    2 AS sort_order,
-    'PLUGIN_CAPABILITY'::text AS row_kind,
-    pc.plugin_key::text AS provider_key,
-    pc.capability_key::text AS capability_key,
-    pc.capability_type::text AS type_or_kind,
-    pc.capability_level::text AS level_or_status,
-    pc.risk_level::text AS risk_level,
-    pc.requires_approval::text AS requires_approval,
-    'enabled'::text AS extra_state
-  FROM public.plugin_capabilities_server pc
-  WHERE pc.is_enabled=true
-
-  UNION ALL
-
-  SELECT
-    3 AS sort_order,
-    'EXTERNAL_CAPABILITY'::text AS row_kind,
-    ec.provider_key::text AS provider_key,
-    ec.capability_key::text AS capability_key,
-    ec.capability_type::text AS type_or_kind,
-    ec.capability_level::text AS level_or_status,
-    ec.risk_level::text AS risk_level,
-    ec.requires_approval::text AS requires_approval,
-    ec.verification_status::text AS extra_state
-  FROM public.autsys_external_capabilities_registry ec
-  WHERE ec.is_enabled=true
-) x
-ORDER BY sort_order,provider_key,capability_key;`.trim();
+SELECT
+  ${sqlLiteral(scope)}::text AS scope,
+  EXISTS(SELECT 1 FROM public.autsys_project_registry p WHERE ${projectWhere}) AS project_found,
+  (SELECT p.project_key::text FROM public.autsys_project_registry p WHERE ${projectWhere} ORDER BY p.is_authoritative DESC,p.id LIMIT 1) AS project_key,
+  (SELECT p.entity_kind::text FROM public.autsys_project_registry p WHERE ${projectWhere} ORDER BY p.is_authoritative DESC,p.id LIMIT 1) AS project_kind,
+  (SELECT p.lifecycle_status::text FROM public.autsys_project_registry p WHERE ${projectWhere} ORDER BY p.is_authoritative DESC,p.id LIMIT 1) AS project_status,
+  (SELECT p.is_authoritative::text FROM public.autsys_project_registry p WHERE ${projectWhere} ORDER BY p.is_authoritative DESC,p.id LIMIT 1) AS project_authoritative,
+  (SELECT count(*)::int FROM public.plugin_capabilities_server pc WHERE pc.is_enabled=true) AS plugin_capability_count,
+  (SELECT count(*)::int FROM public.autsys_external_capabilities_registry ec WHERE ec.is_enabled=true) AS external_capability_count,
+  COALESCE((
+    SELECT string_agg(
+      concat_ws('|',pc.plugin_key,pc.capability_key,pc.capability_type,pc.capability_level,pc.risk_level,pc.requires_approval::text),
+      E'\\n' ORDER BY pc.plugin_key,pc.capability_key
+    )
+    FROM public.plugin_capabilities_server pc
+    WHERE pc.is_enabled=true
+  ),'') AS plugin_capabilities,
+  COALESCE((
+    SELECT string_agg(
+      concat_ws('|',ec.provider_key,ec.capability_key,ec.capability_type,ec.capability_level,ec.risk_level,ec.requires_approval::text,ec.verification_status),
+      E'\\n' ORDER BY ec.provider_key,ec.capability_key
+    )
+    FROM public.autsys_external_capabilities_registry ec
+    WHERE ec.is_enabled=true
+  ),'') AS external_capabilities;`.trim();
 }
 
 async function fetchControlText(ref) {
   const response = await fetch(`${REPO_RAW_BASE}/${ref}/${CONTROL_PATH}`, {
-    headers: { "user-agent": "AUTSYS-PC-BRIDGE-HOT-CONTROL/0.1.0.5" },
+    headers: { "user-agent": "AUTSYS-PC-BRIDGE-HOT-CONTROL/0.1.0.6" },
     signal: AbortSignal.timeout(7000)
   });
   if (!response.ok) {
