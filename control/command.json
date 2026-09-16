@@ -1,10 +1,10 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "33f8b0e8-e13e-4017-a7b1-ca6988ef0d4f",
+  "requestId": "05b861fb-a1b4-4490-83d9-719c07f642af",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
   "tool": "pg.roberta.query",
   "arguments": {
-    "sql": "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='plugin_capabilities_server' ORDER BY ordinal_position;"
+    "sql": "SELECT c.relname AS table_name, con.conname, pg_get_constraintdef(con.oid) AS definition FROM pg_constraint con JOIN pg_class c ON c.oid=con.conrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname IN ('schema_tables_registry','schema_columns_registry','schema_table_knowledge_registry') ORDER BY c.relname,con.conname;"
   },
-  "expiresAt": "2026-09-16T10:55:28.505008Z"
+  "expiresAt": "2026-09-16T11:05:00Z"
 }
