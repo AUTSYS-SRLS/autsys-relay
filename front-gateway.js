@@ -7,7 +7,17 @@ const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
 const REPO_RAW_BASE = "https://raw.githubusercontent.com/AUTSYS-SRLS/autsys-relay";
 const CONTROL_PATH = "control/command.json";
 const MAX_CONTROL_BYTES = 262144;
-const ALLOWED_TOOLS = new Set(["health", "fs.list", "fs.read_text", "fs.find", "fs.write_text", "fs.delete", "pg.roberta.query", "pg.roberta.migrate"]);
+const ALLOWED_TOOLS = new Set([
+  "health",
+  "fs.list",
+  "fs.read_text",
+  "fs.find",
+  "fs.write_text",
+  "fs.delete",
+  "pg.roberta.query",
+  "pg.roberta.migrate",
+  "session.bootstrap"
+]);
 const processed = new Set();
 
 if (!CONTROL_TOKEN) {
@@ -25,9 +35,103 @@ function json(res, status, body) {
   res.end(payload);
 }
 
+function sqlLiteral(value) {
+  return `'${String(value).replaceAll("'", "''")}'`;
+}
+
+function normalizeProjectKey(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 120);
+}
+
+function buildSessionBootstrapSql(args = {}) {
+  const scope = String(args.scope || "").trim().toUpperCase();
+  if (scope !== "GENERAL" && scope !== "PROJECT") {
+    throw new Error("session.bootstrap requires scope GENERAL or PROJECT");
+  }
+
+  const projectName = String(args.projectName || "").trim();
+  if (scope === "PROJECT" && !projectName) {
+    throw new Error("session.bootstrap requires projectName for PROJECT scope");
+  }
+  if (projectName.length > 240) {
+    throw new Error("projectName too long");
+  }
+
+  const projectKey = normalizeProjectKey(projectName);
+  const projectWhere = scope === "PROJECT"
+    ? `WHERE lower(p.display_name)=lower(${sqlLiteral(projectName)}) OR p.project_key=${sqlLiteral(projectKey)}`
+    : "WHERE false";
+
+  return `
+SELECT row_kind,provider_key,capability_key,type_or_kind,level_or_status,risk_level,requires_approval,extra_state
+FROM (
+  SELECT
+    0 AS sort_order,
+    'SESSION'::text AS row_kind,
+    'CHATGPT'::text AS provider_key,
+    ${sqlLiteral(scope)}::text AS capability_key,
+    'SESSION_SCOPE'::text AS type_or_kind,
+    'active'::text AS level_or_status,
+    NULL::text AS risk_level,
+    NULL::text AS requires_approval,
+    NULL::text AS extra_state
+
+  UNION ALL
+
+  SELECT
+    1 AS sort_order,
+    'PROJECT'::text AS row_kind,
+    'PROJECT_REGISTRY'::text AS provider_key,
+    p.project_key::text AS capability_key,
+    p.entity_kind::text AS type_or_kind,
+    p.lifecycle_status::text AS level_or_status,
+    NULL::text AS risk_level,
+    NULL::text AS requires_approval,
+    p.is_authoritative::text AS extra_state
+  FROM public.autsys_project_registry p
+  ${projectWhere}
+
+  UNION ALL
+
+  SELECT
+    2 AS sort_order,
+    'PLUGIN_CAPABILITY'::text AS row_kind,
+    pc.plugin_key::text AS provider_key,
+    pc.capability_key::text AS capability_key,
+    pc.capability_type::text AS type_or_kind,
+    pc.capability_level::text AS level_or_status,
+    pc.risk_level::text AS risk_level,
+    pc.requires_approval::text AS requires_approval,
+    'enabled'::text AS extra_state
+  FROM public.plugin_capabilities_server pc
+  WHERE pc.is_enabled=true
+
+  UNION ALL
+
+  SELECT
+    3 AS sort_order,
+    'EXTERNAL_CAPABILITY'::text AS row_kind,
+    ec.provider_key::text AS provider_key,
+    ec.capability_key::text AS capability_key,
+    ec.capability_type::text AS type_or_kind,
+    ec.capability_level::text AS level_or_status,
+    ec.risk_level::text AS risk_level,
+    ec.requires_approval::text AS requires_approval,
+    ec.verification_status::text AS extra_state
+  FROM public.autsys_external_capabilities_registry ec
+  WHERE ec.is_enabled=true
+) x
+ORDER BY sort_order,provider_key,capability_key;`.trim();
+}
+
 async function fetchControlText(ref) {
   const response = await fetch(`${REPO_RAW_BASE}/${ref}/${CONTROL_PATH}`, {
-    headers: { "user-agent": "AUTSYS-PC-BRIDGE-HOT-CONTROL/0.1.0.4" },
+    headers: { "user-agent": "AUTSYS-PC-BRIDGE-HOT-CONTROL/0.1.0.5" },
     signal: AbortSignal.timeout(7000)
   });
   if (!response.ok) {
@@ -40,8 +144,21 @@ async function fetchControlText(ref) {
   return text;
 }
 
+function translateCommand(command) {
+  if (command.tool !== "session.bootstrap") return command;
+
+  return {
+    ...command,
+    tool: "pg.roberta.query",
+    arguments: {
+      sql: buildSessionBootstrapSql(command.arguments || {})
+    }
+  };
+}
+
 async function executeInternal(command) {
-  const internalTimeoutMs = command.tool === "pg.roberta.migrate" ? 300000 : 15000;
+  const effective = translateCommand(command);
+  const internalTimeoutMs = effective.tool === "pg.roberta.migrate" ? 300000 : 15000;
   const response = await fetch(`http://127.0.0.1:${INTERNAL_PORT}/api/execute`, {
     method: "POST",
     headers: {
@@ -49,10 +166,10 @@ async function executeInternal(command) {
       "content-type": "application/json"
     },
     body: JSON.stringify({
-      requestId: command.requestId,
-      bridgeId: command.bridgeId || undefined,
-      tool: command.tool,
-      arguments: command.arguments || {}
+      requestId: effective.requestId,
+      bridgeId: effective.bridgeId || undefined,
+      tool: effective.tool,
+      arguments: effective.arguments || {}
     }),
     signal: AbortSignal.timeout(internalTimeoutMs)
   });
@@ -60,7 +177,7 @@ async function executeInternal(command) {
   let body;
   try { body = JSON.parse(text); }
   catch { body = { ok: false, error: text || `HTTP ${response.status}` }; }
-  return { status: response.status, body };
+  return { status: response.status, body, effectiveTool: effective.tool };
 }
 
 async function handleChatPull(req, res, url) {
@@ -105,11 +222,12 @@ async function handleChatPull(req, res, url) {
     const started = performance.now();
     const result = await executeInternal({ ...command, tool });
     const totalMs = Math.round((performance.now() - started) * 1000) / 1000;
-    console.log(`HOT_CHAT_CONTROL ${requestId} ${tool} http=${result.status} totalMs=${totalMs}`);
+    console.log(`HOT_CHAT_CONTROL ${requestId} ${tool} -> ${result.effectiveTool} http=${result.status} totalMs=${totalMs}`);
     return json(res, result.status, {
       ok: result.status >= 200 && result.status < 300,
       requestId,
       tool,
+      effectiveTool: result.effectiveTool,
       hotControlMs: totalMs,
       gatewayResponse: result.body
     });
@@ -168,4 +286,5 @@ server.on("upgrade", (req, socket, head) => {
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`AUTSYS PC BRIDGE FRONT GATEWAY listening on ${PORT}; backend=${INTERNAL_PORT}`);
   console.log("HOT CHAT CONTROL ready at /chat-control/pull");
+  console.log("SESSION BOOTSTRAP ready as session.bootstrap");
 });
