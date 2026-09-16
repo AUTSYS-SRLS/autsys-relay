@@ -1,10 +1,13 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "40a28b55-3250-439f-a173-d0bfc0f03637",
+  "requestId": "2a0d9544-63c8-4405-b6dd-f4fde33cdabc",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
-  "tool": "pg.roberta.query",
+  "tool": "project.register",
   "arguments": {
-    "sql": "SELECT indexname,indexdef FROM pg_indexes WHERE schemaname='public' AND tablename='autsys_project_registry' ORDER BY indexname;"
+    "projectName": "AUTSYS PC BRIDGE",
+    "projectKey": "AUTSYS_PC_BRIDGE",
+    "entityKind": "INFRASTRUCTURE",
+    "isAuthoritative": true
   },
-  "expiresAt": "2026-09-16T16:48:00Z"
+  "expiresAt": "2026-09-16T16:53:00Z"
 }
