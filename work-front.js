@@ -20,9 +20,10 @@ const ALLOWED_TOOLS = new Set([
   "fs.write_text",
   "fs.delete",
   "pg.roberta.query",
+  "pg.roberta.write",
   "session.bootstrap"
 ]);
-const WRITE_TOOLS = new Set(["fs.write_text", "fs.delete"]);
+const WRITE_TOOLS = new Set(["fs.write_text", "fs.delete", "pg.roberta.write"]);
 
 if (!CONTROL_TOKEN || !PANEL_ACCESS_KEY || !PANEL_SESSION_SECRET) {
   console.error("WORK FRONT disabled: missing CONTROL_TOKEN, PANEL_ACCESS_KEY or PANEL_SESSION_SECRET");
@@ -101,7 +102,7 @@ function loginPage(message = "") {
 }
 function panelPage(result = null, resultTitle = "Risultato") {
   const output = result == null ? "" : `<div class="card"><h2>${esc(resultTitle)}</h2><pre>${esc(JSON.stringify(result, null, 2))}</pre></div>`;
-  return layout("AUTSYS PC BRIDGE — Work", `<div class="top"><div><h1>AUTSYS PC BRIDGE — Work</h1><div class="muted">Interfaccia controllata per ChatGPT Work</div></div><form method="post" action="/work/logout"><button type="submit">ESCI</button></form></div><div class="card"><p><strong>Disponibili:</strong> health, fs.list, fs.read_text, fs.find, fs.write_text, fs.delete, pg.roberta.query, session.bootstrap.</p><p class="warn"><strong>Non esposti:</strong> shell libera, pg.roberta.migrate, project.register provvisorio.</p></div><div class="grid">
+  return layout("AUTSYS PC BRIDGE — Work", `<div class="top"><div><h1>AUTSYS PC BRIDGE — Work</h1><div class="muted">Interfaccia controllata per ChatGPT Work</div></div><form method="post" action="/work/logout"><button type="submit">ESCI</button></form></div><div class="card"><p><strong>Disponibili:</strong> health, file tools, pg.roberta.query, pg.roberta.write, session.bootstrap.</p><p class="warn"><strong>Governance:</strong> nessuna shell libera e nessun SQL libero di scrittura; migrazioni e registrazione progetti restano nell’estensione DB protetta.</p></div><div class="grid">
 <div class="card"><h2>Stato Bridge</h2><form method="post" action="/work/run"><input type="hidden" name="tool" value="health"><button>HEALTH</button></form></div>
 <div class="card"><h2>Elenca cartella</h2><form method="post" action="/work/run"><input type="hidden" name="tool" value="fs.list"><label>Percorso</label><input name="path" required><button>ELENCA</button></form></div>
 <div class="card"><h2>Leggi file</h2><form method="post" action="/work/run"><input type="hidden" name="tool" value="fs.read_text"><label>Percorso file</label><input name="path" required><button>LEGGI</button></form></div>
@@ -109,6 +110,7 @@ function panelPage(result = null, resultTitle = "Risultato") {
 <div class="card"><h2>Scrivi file</h2><form method="post" action="/work/run"><input type="hidden" name="tool" value="fs.write_text"><label>Percorso file</label><input name="path" required><label>Contenuto</label><textarea name="content" required></textarea><label><input style="width:auto" type="checkbox" name="confirm" value="YES" required> Confermo la scrittura</label><button>SCRIVI</button></form></div>
 <div class="card"><h2>Elimina file</h2><form method="post" action="/work/run"><input type="hidden" name="tool" value="fs.delete"><label>Percorso file</label><input name="path" required><label><input style="width:auto" type="checkbox" name="confirm" value="YES" required> Confermo l'eliminazione</label><button class="danger">ELIMINA</button></form></div>
 <div class="card"><h2>Query ROBERTA</h2><form method="post" action="/work/run"><input type="hidden" name="tool" value="pg.roberta.query"><label>SQL sola lettura</label><textarea name="sql" required></textarea><button>ESEGUI QUERY</button></form></div>
+<div class="card"><h2>Scrittura dati ROBERTA</h2><form method="post" action="/work/run"><input type="hidden" name="tool" value="pg.roberta.write"><label>Richiesta JSON strutturata</label><textarea name="writeJson" required></textarea><label><input style="width:auto" type="checkbox" name="confirm" value="YES" required> Confermo la scrittura dati</label><button class="danger">ESEGUI SCRITTURA</button></form></div>
 <div class="card"><h2>Session bootstrap</h2><form method="post" action="/work/run"><input type="hidden" name="tool" value="session.bootstrap"><label>Ambito</label><select name="scope"><option>GENERAL</option><option>PROJECT</option></select><label>Nome progetto (solo PROJECT)</label><input name="projectName"><button>BOOTSTRAP</button></form></div>
 </div>${output}`);
 }
@@ -122,6 +124,40 @@ async function readForm(req) {
   }
   return new URLSearchParams(Buffer.concat(chunks).toString("utf8"));
 }
+
+function parseWriteArguments(form) {
+  const text = String(form.get("writeJson") || "").trim();
+  if (!text || text.length > 512 * 1024) throw new Error("write JSON missing or too large");
+  let args;
+  try { args = JSON.parse(text); } catch { throw new Error("write JSON invalid"); }
+  if (!args || typeof args !== "object" || Array.isArray(args)) throw new Error("write JSON must be an object");
+
+  const allowedKeys = new Set(["operation","schema","table","values","rows","filters","conflictColumns","maxAffectedRows","returning","idempotencyKey"]);
+  for (const key of Object.keys(args)) {
+    if (!allowedKeys.has(key)) throw new Error(`write field not allowed: ${key}`);
+  }
+  const operation = String(args.operation || "").trim().toLowerCase();
+  if (!["insert","update","delete","upsert"].includes(operation)) throw new Error("invalid write operation");
+  if (String(args.schema || "").trim() !== "public") throw new Error("only public schema is allowed");
+  const identifier = value => /^[A-Za-z_][A-Za-z0-9_]{0,62}$/.test(String(value || "").trim());
+  if (!identifier(args.table)) throw new Error("invalid table");
+  const idempotencyKey = String(args.idempotencyKey || "").trim();
+  if (!idempotencyKey || idempotencyKey.length > 240) throw new Error("invalid idempotencyKey");
+  if (args.sql !== undefined) throw new Error("free SQL is not allowed");
+  if (args.returning != null && (!Array.isArray(args.returning) || args.returning.some(x => !identifier(x)))) throw new Error("invalid returning");
+  if (args.conflictColumns != null && (!Array.isArray(args.conflictColumns) || args.conflictColumns.some(x => !identifier(x)))) throw new Error("invalid conflictColumns");
+  if (args.filters != null && !Array.isArray(args.filters)) throw new Error("invalid filters");
+  if (["update","delete"].includes(operation)) {
+    if (!Array.isArray(args.filters) || args.filters.length === 0) throw new Error("update/delete require filters");
+    if (!Number.isInteger(args.maxAffectedRows) || args.maxAffectedRows < 1 || args.maxAffectedRows > 100) throw new Error("invalid maxAffectedRows");
+  }
+  args.operation = operation;
+  args.schema = "public";
+  args.table = String(args.table).trim();
+  args.idempotencyKey = idempotencyKey;
+  return args;
+}
+
 function buildArguments(tool, form) {
   switch (tool) {
     case "health": return {};
@@ -131,6 +167,7 @@ function buildArguments(tool, form) {
     case "fs.find": return { path: String(form.get("path") || "").trim(), pattern: String(form.get("pattern") || "").trim() };
     case "fs.write_text": return { path: String(form.get("path") || "").trim(), content: String(form.get("content") || "") };
     case "pg.roberta.query": return { sql: String(form.get("sql") || "").trim() };
+    case "pg.roberta.write": return parseWriteArguments(form);
     case "session.bootstrap": return { scope: String(form.get("scope") || "GENERAL").trim().toUpperCase(), projectName: String(form.get("projectName") || "").trim() };
     default: throw new Error("tool not supported");
   }
@@ -141,7 +178,7 @@ async function callBridge(tool, args) {
     method: "POST",
     headers: { authorization: `Bearer ${CONTROL_TOKEN}`, "content-type": "application/json" },
     body: JSON.stringify({ requestId, tool, arguments: args }),
-    signal: AbortSignal.timeout(30000)
+    signal: AbortSignal.timeout(tool === "pg.roberta.write" ? 60000 : 30000)
   });
   const text = await response.text();
   let body;
