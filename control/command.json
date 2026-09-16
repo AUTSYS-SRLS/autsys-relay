@@ -1,11 +1,10 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "5a4c2ef8-6931-4289-83dc-0e9084ab401d",
+  "requestId": "cacd6be8-126c-4c3b-87c0-e4dd687d212d",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
-  "tool": "session.bootstrap",
+  "tool": "fs.read_text",
   "arguments": {
-    "scope": "PROJECT",
-    "projectName": "AUTSYS BOOTSTRAP TEST NONEXISTENT"
+    "path": "D:\\AUTSYS\\AUTSYS S.R.L.S\\CLIENTI\\AUTSYS S.R.L.S\\05 - AUTSYS PC BRIDGE\\AUTSYS PC BRIDGE\\SERVICE\\APP\\roberta_db_tool.py"
   },
-  "expiresAt": "2026-09-16T15:49:00Z"
+  "expiresAt": "2026-09-16T16:35:00Z"
 }
