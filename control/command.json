@@ -1,10 +1,10 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "53b0884b-5951-4db1-b712-ef5cf4804d7c",
+  "requestId": "4124896b-e197-43a0-a902-29ad14ee87df",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
   "tool": "pg.roberta.query",
   "arguments": {
-    "sql": "SELECT count(*) AS enabled_capabilities, count(DISTINCT plugin_key) AS plugins FROM public.plugin_capabilities_server WHERE is_enabled=true;"
+    "sql": "SELECT a.attnum AS ordinal,a.attname AS column_name,pg_catalog.format_type(a.atttypid,a.atttypmod) AS data_type FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid=a.attrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname='autsys_external_capabilities_registry' AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attnum;"
   },
-  "expiresAt": "2026-09-16T14:50:00Z"
+  "expiresAt": "2026-09-16T14:52:00Z"
 }
