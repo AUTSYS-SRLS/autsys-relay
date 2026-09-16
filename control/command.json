@@ -1,10 +1,10 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "a4336af7-744c-43bc-98d7-ddff11028d66",
+  "requestId": "fbb738dd-e168-44b4-b32c-e9b782fb67f7",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
   "tool": "pg.roberta.query",
   "arguments": {
-    "sql": "SELECT module_key,file_name,relative_path FROM public.system_modules_registry WHERE is_active=true ORDER BY module_key;"
+    "sql": "SELECT module_key,file_name,relative_path FROM public.system_modules_registry WHERE is_active=true AND (module_key ILIKE '%core%' OR module_key ILIKE '%bridge%') ORDER BY module_key LIMIT 50;"
   },
-  "expiresAt": "2026-09-16T15:44:00Z"
+  "expiresAt": "2026-09-16T15:45:00Z"
 }
