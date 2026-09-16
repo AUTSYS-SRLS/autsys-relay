@@ -1,10 +1,10 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "58d9ef35-f2ad-4bcf-9b37-437dd7d17106",
+  "requestId": "73fe43b1-dba2-4fc1-8074-85d7ec522f18",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
   "tool": "pg.roberta.query",
   "arguments": {
-    "sql": "SELECT table_name,column_name,data_type,udt_name,is_nullable,column_default FROM information_schema.columns WHERE table_schema='public' AND table_name IN ('schema_tables_registry','schema_columns_registry','schema_table_knowledge_registry','schema_migrations_registry','system_modules_registry','program_runtime_registry','plugin_capabilities_server','system_runtime_registry','documents_registry','semantic_registry','meta_migrations','meta_schema_version') ORDER BY table_name,ordinal_position;"
+    "sql": "SELECT table_name,column_name,data_type,is_nullable,column_default FROM information_schema.columns WHERE table_schema='public' AND table_name IN ('schema_tables_registry','schema_columns_registry','schema_table_knowledge_registry') ORDER BY table_name,ordinal_position;"
   },
-  "expiresAt": "2026-09-16T10:48:59.902726Z"
+  "expiresAt": "2026-09-16T10:49:48.053397Z"
 }
