@@ -1,11 +1,10 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "42d5a1e2-f645-406c-aa0c-c7863b9f6968",
+  "requestId": "da0bed62-fbd3-47dc-8c8f-a1eb66acfd42",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
-  "tool": "fs.find",
+  "tool": "fs.list",
   "arguments": {
-    "path": "D:\\AUTSYS\\AUTSYS S.R.L.S\\CLIENTI\\AUTSYS S.R.L.S",
-    "pattern": "comandi_server"
+    "path": "D:\\AUTSYS\\AUTSYS S.R.L.S\\CLIENTI\\AUTSYS S.R.L.S\\01 - SIMULATORE CODICE ROBERTA\\AUTSYS ROBERTA SERVER GHOST\\memory_server\\system_server\\roberta_server\\archive_server\\comandi_server"
   },
   "expiresAt": "2026-09-16T15:47:00Z"
 }
