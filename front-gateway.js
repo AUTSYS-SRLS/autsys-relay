@@ -67,7 +67,7 @@ function parseBootstrapArgs(args = {}) {
 
 async function fetchControlText(ref) {
   const response = await fetch(`${REPO_RAW_BASE}/${ref}/${CONTROL_PATH}`, {
-    headers: { "user-agent": "AUTSYS-PC-BRIDGE-HOT-CONTROL/0.1.0.7" },
+    headers: { "user-agent": "AUTSYS-PC-BRIDGE-HOT-CONTROL/0.1.0.8" },
     signal: AbortSignal.timeout(7000)
   });
   if (!response.ok) {
@@ -149,6 +149,8 @@ SELECT
   const summaryCall = await callBridge(command, "pg.roberta.query", { sql: summarySql }, "bootstrap-summary");
   const summaryResult = requireQueryResult(summaryCall, "summary");
   const summary = firstRow(summaryResult);
+  const projectFound = Boolean(summary.project_found);
+  const registrationRequired = scope === "PROJECT" && !projectFound;
   const pluginKeys = splitLines(decodeB64(summary.plugin_keys_b64));
 
   const pluginCapabilities = [];
@@ -214,11 +216,33 @@ WHERE ec.is_enabled=true;`.trim();
       scope,
       project: {
         requestedName: scope === "PROJECT" ? projectName : null,
-        found: Boolean(summary.project_found),
-        projectKey: summary.project_key || null,
+        found: projectFound,
+        projectKey: summary.project_key || (scope === "PROJECT" ? projectKey : null),
         entityKind: summary.project_kind || null,
         lifecycleStatus: summary.project_status || null,
         authoritative: String(summary.project_authoritative || "").toLowerCase() === "true"
+      },
+      registration: registrationRequired ? {
+        required: true,
+        known: {
+          projectName,
+          projectKey
+        },
+        requiredFields: [
+          {
+            name: "entityKind",
+            label: "tipo di progetto",
+            reason: "autsys_project_registry.entity_kind is mandatory and cannot be derived safely from the session name"
+          }
+        ],
+        optionalFields: [
+          "rootPath",
+          "repositoryUrl",
+          "repositoryBranch",
+          "description"
+        ]
+      } : {
+        required: false
       },
       pluginCapabilityCount: Number(summary.plugin_capability_count || 0),
       externalCapabilityCount: Number(summary.external_capability_count || 0),
