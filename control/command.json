@@ -1,10 +1,10 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "4e691a1b-d4b0-43b1-b702-850f6bea9348",
+  "requestId": "160bc2ca-b828-42a0-b128-eabec62df27d",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
   "tool": "fs.read_text",
   "arguments": {
-    "path": "D:\\AUTSYS\\AUTSYS S.R.L.S\\CLIENTI\\AUTSYS S.R.L.S\\05 - AUTSYS PC BRIDGE\\AUTSYS PC BRIDGE\\src\\AUTSYS.PCBridge\\FilesystemTools.cs"
+    "path": "D:\\AUTSYS\\AUTSYS S.R.L.S\\CLIENTI\\AUTSYS S.R.L.S\\05 - AUTSYS PC BRIDGE\\AUTSYS PC BRIDGE\\src\\AUTSYS.PCBridge\\SandboxWorker.cs"
   },
-  "expiresAt": "2026-09-16T16:41:00Z"
+  "expiresAt": "2026-09-16T16:42:00Z"
 }
