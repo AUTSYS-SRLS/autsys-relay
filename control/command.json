@@ -1,10 +1,10 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "2dd8bc49-d64b-4f82-910b-955a6adf1771",
+  "requestId": "5512b9fb-76fb-476a-bdbb-bb15b83aaadb",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
   "tool": "pg.roberta.query",
   "arguments": {
-    "sql": "SELECT input_schema_json::text AS input_schema, output_schema_json::text AS output_schema, policy_json::text AS policy FROM public.plugin_registry_server WHERE plugin_key='plugin_database_manager';"
+    "sql": "SELECT jsonb_object_keys(metadata_json) AS metadata_key FROM public.plugin_registry_server WHERE plugin_key='plugin_database_manager' ORDER BY metadata_key;"
   },
-  "expiresAt": "2026-09-16T15:30:00Z"
+  "expiresAt": "2026-09-16T15:31:00Z"
 }
