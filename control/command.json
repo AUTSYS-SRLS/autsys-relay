@@ -1,10 +1,10 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "da0bed62-fbd3-47dc-8c8f-a1eb66acfd42",
+  "requestId": "fd551ec2-804e-449f-92b5-b146b59562dd",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
-  "tool": "fs.list",
+  "tool": "fs.read_text",
   "arguments": {
-    "path": "D:\\AUTSYS\\AUTSYS S.R.L.S\\CLIENTI\\AUTSYS S.R.L.S\\01 - SIMULATORE CODICE ROBERTA\\AUTSYS ROBERTA SERVER GHOST\\memory_server\\system_server\\roberta_server\\archive_server\\comandi_server"
+    "path": "D:\\AUTSYS\\AUTSYS S.R.L.S\\CLIENTI\\AUTSYS S.R.L.S\\01 - SIMULATORE CODICE ROBERTA\\AUTSYS ROBERTA SERVER GHOST\\memory_server\\system_server\\roberta_server\\archive_server\\comandi_server\\comandi_server_2026-03-03.jsonl"
   },
-  "expiresAt": "2026-09-16T15:47:00Z"
+  "expiresAt": "2026-09-16T15:48:00Z"
 }
