@@ -1,10 +1,10 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "c53d83b8-46bb-45cc-a564-e041d2bc9d67",
+  "requestId": "2d3f7c47-b15f-46e8-867d-35a106b4cf25",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
   "tool": "pg.roberta.query",
   "arguments": {
-    "sql": "SELECT config_group,config_key,config_value_text,value_type,notes FROM public.system_runtime_registry WHERE is_active=true AND config_group IN ('routing','ports','runtime') ORDER BY config_group,priority_int DESC,id;"
+    "sql": "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='system_modules_registry' ORDER BY ordinal_position;"
   },
-  "expiresAt": "2026-09-16T15:42:00Z"
+  "expiresAt": "2026-09-16T15:43:00Z"
 }
