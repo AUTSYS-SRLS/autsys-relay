@@ -1,10 +1,11 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "160bc2ca-b828-42a0-b128-eabec62df27d",
+  "requestId": "14106310-ee9b-4d7f-942f-d0ff4d2cad2e",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
-  "tool": "fs.read_text",
+  "tool": "fs.find",
   "arguments": {
-    "path": "D:\\AUTSYS\\AUTSYS S.R.L.S\\CLIENTI\\AUTSYS S.R.L.S\\05 - AUTSYS PC BRIDGE\\AUTSYS PC BRIDGE\\src\\AUTSYS.PCBridge\\SandboxWorker.cs"
+    "path": "D:\\AUTSYS\\AUTSYS S.R.L.S\\CLIENTI\\AUTSYS S.R.L.S\\05 - AUTSYS PC BRIDGE\\AUTSYS PC BRIDGE",
+    "pattern": "*.cmd"
   },
-  "expiresAt": "2026-09-16T16:42:00Z"
+  "expiresAt": "2026-09-16T16:43:00Z"
 }
