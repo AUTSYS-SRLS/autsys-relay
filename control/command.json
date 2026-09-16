@@ -1,10 +1,10 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "96e07916-5195-461f-8337-9a646dad4611",
+  "requestId": "4736071e-583d-4b62-b69e-4b0798dd05c4",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
-  "tool": "fs.read_text",
+  "tool": "pg.roberta.query",
   "arguments": {
-    "path": "D:\\AUTSYS\\AUTSYS S.R.L.S\\CLIENTI\\AUTSYS S.R.L.S\\05 - AUTSYS PC BRIDGE\\AUTSYS PC BRIDGE\\src\\AUTSYS.PCBridge\\SandboxWorker.cs"
+    "sql": "SELECT plugin_key,capability_key,capability_type,capability_description,capability_level,is_enabled,requires_approval,risk_level FROM public.plugin_capabilities_server WHERE is_enabled=true ORDER BY plugin_key,capability_key;"
   },
-  "expiresAt": "2026-09-16T14:40:00Z"
+  "expiresAt": "2026-09-16T14:41:00Z"
 }
