@@ -1,10 +1,10 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "885c5df6-4214-4930-9a4c-4e98f37ea7a3",
+  "requestId": "8edc0d67-1c4a-47f4-9cb0-10fe6c0b4b4a",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
   "tool": "fs.list",
   "arguments": {
-    "path": "D:\\AUTSYS\\AUTSYS S.R.L.S\\CLIENTI\\AUTSYS S.R.L.S\\05 - AUTSYS PC BRIDGE\\AUTSYS PC BRIDGE"
+    "path": "D:\\AUTSYS\\AUTSYS S.R.L.S\\CLIENTI\\AUTSYS S.R.L.S\\05 - AUTSYS PC BRIDGE\\AUTSYS PC BRIDGE\\src"
   },
-  "expiresAt": "2026-09-16T14:38:00Z"
+  "expiresAt": "2026-09-16T14:39:00Z"
 }
