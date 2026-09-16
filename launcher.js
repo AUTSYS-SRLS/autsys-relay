@@ -40,6 +40,8 @@ process.on("SIGINT", () => shutdown("SIGINT"));
 
 const publicPort = String(process.env.PORT || 10000);
 const internalPort = String(process.env.GATEWAY_INTERNAL_PORT || 10001);
+const legacyFrontPort = String(process.env.LEGACY_FRONT_PORT || 10002);
 
 start("gateway-backend", "server.js", { PORT: internalPort });
-start("front-gateway", "front-gateway.js", { PORT: publicPort, GATEWAY_INTERNAL_PORT: internalPort });
+start("front-gateway", "front-gateway.js", { PORT: legacyFrontPort, GATEWAY_INTERNAL_PORT: internalPort });
+start("work-front", "work-front.js", { PORT: publicPort, LEGACY_FRONT_PORT: legacyFrontPort, GATEWAY_INTERNAL_PORT: internalPort });
