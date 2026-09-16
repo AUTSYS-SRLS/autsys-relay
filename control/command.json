@@ -1,11 +1,11 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "956f9cf0-b53c-4995-bcc8-89de4e1fffc3",
+  "requestId": "cb7af468-26ce-4f5f-8bbf-abd426872ccc",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
   "tool": "session.bootstrap",
   "arguments": {
     "scope": "PROJECT",
     "projectName": "AUTSYS PC BRIDGE"
   },
-  "expiresAt": "2026-09-16T14:57:00Z"
+  "expiresAt": "2026-09-16T14:59:00Z"
 }
