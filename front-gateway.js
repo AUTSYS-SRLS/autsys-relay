@@ -41,6 +41,7 @@ async function fetchControlText(ref) {
 }
 
 async function executeInternal(command) {
+  const internalTimeoutMs = command.tool === "pg.roberta.migrate" ? 300000 : 15000;
   const response = await fetch(`http://127.0.0.1:${INTERNAL_PORT}/api/execute`, {
     method: "POST",
     headers: {
@@ -53,7 +54,7 @@ async function executeInternal(command) {
       tool: command.tool,
       arguments: command.arguments || {}
     }),
-    signal: AbortSignal.timeout(15000)
+    signal: AbortSignal.timeout(internalTimeoutMs)
   });
   const text = await response.text();
   let body;
