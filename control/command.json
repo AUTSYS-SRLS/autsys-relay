@@ -1,12 +1,10 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "ec77958c-3de7-4542-92c7-01a0d0c0ed39",
+  "requestId": "0e23f64a-152d-49fa-8a46-78808afc3528",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
-  "tool": "pg.roberta.migrate",
+  "tool": "pg.roberta.query",
   "arguments": {
-    "migrationId": "20260916_PROJECT_REGISTER_INSERT_PATH_TEST_V1",
-    "description": "Verify direct project registration INSERT path without creating a test project",
-    "sql": "INSERT INTO public.autsys_project_registry (project_key,display_name,entity_kind) SELECT 'AUTSYS_PROJECT_REGISTER_TEST_NEVER_INSERTED','AUTSYS PROJECT REGISTER TEST NEVER INSERTED','TEST' WHERE false;"
+    "sql": "SELECT count(*)::int AS test_rows FROM public.autsys_project_registry WHERE project_key='AUTSYS_PROJECT_REGISTER_TEST_NEVER_INSERTED';"
   },
-  "expiresAt": "2026-09-16T16:54:00Z"
+  "expiresAt": "2026-09-16T16:55:00Z"
 }
