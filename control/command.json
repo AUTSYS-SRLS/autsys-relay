@@ -1,10 +1,10 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "7d934edd-ea4d-4b70-ab30-5f32112db337",
+  "requestId": "f8d579af-81dc-4ed2-9cc6-15b238488d64",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
-  "tool": "fs.read_text",
+  "tool": "pg.roberta.query",
   "arguments": {
-    "path": "D:\\AUTSYS\\AUTSYS S.R.L.S\\CLIENTI\\AUTSYS S.R.L.S\\05 - AUTSYS PC BRIDGE\\AUTSYS PC BRIDGE\\CONFIG\\AUTHORIZED_ROOTS.json"
+    "sql": "SELECT config_key,config_value_text FROM public.system_runtime_registry WHERE is_active=true AND config_group='paths' ORDER BY priority_int DESC,id;"
   },
-  "expiresAt": "2026-09-16T15:43:00Z"
+  "expiresAt": "2026-09-16T15:46:00Z"
 }
