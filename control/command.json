@@ -1,10 +1,10 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "31c2e20d-f5fe-426c-876f-d1981e377d7b",
+  "requestId": "51d3953f-4ec8-4b1b-bc54-698ee953525d",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
-  "tool": "pg.roberta.query",
+  "tool": "fs.read_text",
   "arguments": {
-    "sql": "SELECT jsonb_build_object('project',(SELECT to_jsonb(p) FROM public.autsys_project_registry p WHERE lower(p.display_name)=lower('AUTSYS PC BRIDGE') OR p.project_key='AUTSYS_PC_BRIDGE' ORDER BY p.is_authoritative DESC,p.id LIMIT 1),'pluginCapabilities',COALESCE((SELECT jsonb_agg(to_jsonb(pc)-'id' ORDER BY pc.plugin_key,pc.capability_key) FROM public.plugin_capabilities_server pc WHERE pc.is_enabled=true),'[]'::jsonb),'externalCapabilities',COALESCE((SELECT jsonb_agg(to_jsonb(ec)-'id' ORDER BY ec.provider_key,ec.capability_key) FROM public.autsys_external_capabilities_registry ec WHERE ec.is_enabled=true),'[]'::jsonb)) AS bootstrap;"
+    "path": "D:\\AUTSYS\\AUTSYS S.R.L.S\\CLIENTI\\AUTSYS S.R.L.S\\05 - AUTSYS PC BRIDGE\\AUTSYS PC BRIDGE\\src\\AUTSYS.PCBridge\\FilesystemTools.cs"
   },
-  "expiresAt": "2026-09-16T14:54:00Z"
+  "expiresAt": "2026-09-16T14:56:00Z"
 }
