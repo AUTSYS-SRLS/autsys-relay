@@ -1,11 +1,10 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "14106310-ee9b-4d7f-942f-d0ff4d2cad2e",
+  "requestId": "0e102efe-92e6-400d-bdc8-e1324759cabd",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
-  "tool": "fs.find",
+  "tool": "fs.read_text",
   "arguments": {
-    "path": "D:\\AUTSYS\\AUTSYS S.R.L.S\\CLIENTI\\AUTSYS S.R.L.S\\05 - AUTSYS PC BRIDGE\\AUTSYS PC BRIDGE",
-    "pattern": "*.cmd"
+    "path": "D:\\AUTSYS\\AUTSYS S.R.L.S\\CLIENTI\\AUTSYS S.R.L.S\\05 - AUTSYS PC BRIDGE\\AUTSYS PC BRIDGE\\src\\AUTSYS.PCBridge\\MutationSafetyPolicy.cs"
   },
-  "expiresAt": "2026-09-16T16:43:00Z"
+  "expiresAt": "2026-09-16T16:44:00Z"
 }
