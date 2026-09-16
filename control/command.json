@@ -1,10 +1,10 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "7dfd3e8b-1b71-4e59-90b1-9c5d8f5670fc",
+  "requestId": "79d1920b-a6f4-4db5-9f05-2616fc23f341",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
   "tool": "pg.roberta.query",
   "arguments": {
-    "sql": "SELECT current_database() AS database_name, current_user AS db_user, (SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE') AS public_table_count;"
+    "sql": "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE' AND table_name ~* '(project|product|release|artifact|capabil|component|program|system|schema_|migration|registry|audit)' ORDER BY table_name;"
   },
-  "expiresAt": "2026-09-16T10:47:57.384658Z"
+  "expiresAt": "2026-09-16T10:48:29.130106Z"
 }
