@@ -1,13 +1,12 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "18e902f2-80ec-43a5-9493-be6f89bae27a",
+  "requestId": "822495d4-1d0d-46b6-8e8b-bcd59a5804bc",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
   "tool": "fs.write_text",
   "arguments": {
     "path": "D:\\AUTSYS\\AUTSYS S.R.L.S\\CLIENTI\\AUTSYS S.R.L.S\\05 - AUTSYS PC BRIDGE\\AUTSYS PC BRIDGE\\SANDBOX\\CHAT_DATA\\SAFETY_POLICY_TEST.txt",
-    "content": "v1",
-    "overwrite": true,
-    "createDirectories": true
+    "content": "v2",
+    "overwrite": true
   },
-  "expiresAt": "2026-09-16T09:09:48.794804Z"
+  "expiresAt": "2026-09-16T09:10:40.317644Z"
 }
