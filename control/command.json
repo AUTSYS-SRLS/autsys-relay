@@ -1,10 +1,10 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "f711c40d-adff-4d79-a55f-4f74c35ed16d",
+  "requestId": "9a02d4de-87b5-4f3b-bb8d-3d5cbf4f5d71",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
   "tool": "pg.roberta.query",
   "arguments": {
-    "sql": "SELECT (SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE') AS actual_tables, (SELECT count(DISTINCT table_name) FROM public.schema_tables_registry WHERE engine='postgresql' AND schema_name='public' AND is_active=true) AS registered_tables, (SELECT count(*) FROM public.schema_registry_reconciliation_live WHERE object_kind='table' AND registry_status='missing') AS missing_tables, (SELECT count(*) FROM public.schema_registry_reconciliation_live WHERE object_kind='column' AND registry_status='missing') AS missing_columns, (SELECT count(*) FROM public.autsys_project_registry) AS projects, (SELECT count(*) FROM public.autsys_project_components) AS components, (SELECT count(*) FROM public.autsys_release_registry) AS releases, (SELECT count(*) FROM public.autsys_external_capabilities_registry) AS external_capabilities, (SELECT count(*) FROM public.autsys_capabilities_unified) AS unified_capabilities, (SELECT count(*) FROM public.schema_migrations_registry WHERE migration_key IN ('20260916_AUTSYS_CENTRAL_CATALOG_V1','20260916_AUTSYS_SCHEMA_REGISTRY_FULL_SYNC_V1','20260916_AUTSYS_CAPABILITY_VIEW_SECURITY_INVOKER_V1') AND migration_status='applied') AS applied_migrations, (SELECT NOT rolcanlogin FROM pg_roles WHERE rolname='autsys_pc_bridge_migrator') AS migrator_disabled;"
+    "sql": "SELECT table_name, json_agg(column_name ORDER BY ordinal_position) AS columns FROM information_schema.columns WHERE table_schema='public' AND (table_name LIKE 'autsys_%' OR table_name LIKE 'plugin_%' OR table_name IN ('program_runtime_registry','system_modules_registry','system_runtime_registry')) GROUP BY table_name ORDER BY table_name;"
   },
-  "expiresAt": "2026-09-16T11:28:00Z"
+  "expiresAt": "2026-09-16T14:10:00Z"
 }
