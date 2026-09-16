@@ -1,10 +1,11 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "f8d579af-81dc-4ed2-9cc6-15b238488d64",
+  "requestId": "42d5a1e2-f645-406c-aa0c-c7863b9f6968",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
-  "tool": "pg.roberta.query",
+  "tool": "fs.find",
   "arguments": {
-    "sql": "SELECT config_key,config_value_text FROM public.system_runtime_registry WHERE is_active=true AND config_group='paths' ORDER BY priority_int DESC,id;"
+    "path": "D:\\AUTSYS\\AUTSYS S.R.L.S\\CLIENTI\\AUTSYS S.R.L.S",
+    "pattern": "comandi_server"
   },
-  "expiresAt": "2026-09-16T15:46:00Z"
+  "expiresAt": "2026-09-16T15:47:00Z"
 }
