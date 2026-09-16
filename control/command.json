@@ -1,10 +1,10 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "4124896b-e197-43a0-a902-29ad14ee87df",
+  "requestId": "31c2e20d-f5fe-426c-876f-d1981e377d7b",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
   "tool": "pg.roberta.query",
   "arguments": {
-    "sql": "SELECT a.attnum AS ordinal,a.attname AS column_name,pg_catalog.format_type(a.atttypid,a.atttypmod) AS data_type FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid=a.attrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname='autsys_external_capabilities_registry' AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attnum;"
+    "sql": "SELECT jsonb_build_object('project',(SELECT to_jsonb(p) FROM public.autsys_project_registry p WHERE lower(p.display_name)=lower('AUTSYS PC BRIDGE') OR p.project_key='AUTSYS_PC_BRIDGE' ORDER BY p.is_authoritative DESC,p.id LIMIT 1),'pluginCapabilities',COALESCE((SELECT jsonb_agg(to_jsonb(pc)-'id' ORDER BY pc.plugin_key,pc.capability_key) FROM public.plugin_capabilities_server pc WHERE pc.is_enabled=true),'[]'::jsonb),'externalCapabilities',COALESCE((SELECT jsonb_agg(to_jsonb(ec)-'id' ORDER BY ec.provider_key,ec.capability_key) FROM public.autsys_external_capabilities_registry ec WHERE ec.is_enabled=true),'[]'::jsonb)) AS bootstrap;"
   },
-  "expiresAt": "2026-09-16T14:52:00Z"
+  "expiresAt": "2026-09-16T14:54:00Z"
 }
