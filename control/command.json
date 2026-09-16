@@ -1,10 +1,10 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "488e67d0-742f-4be6-92ad-b383ce9def8e",
+  "requestId": "b8e42b57-594f-4cb2-90ab-6a26245c8527",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
   "tool": "pg.roberta.query",
   "arguments": {
-    "sql": "SELECT count(*) AS n FROM public.plugin_capabilities_server;"
+    "sql": "SELECT table_name,column_name,data_type FROM public.schema_columns_registry WHERE schema_name='public' AND table_name IN ('autsys_external_capabilities_registry','autsys_project_components','autsys_project_data_sources','plugin_registry_server','plugin_capabilities_server') AND is_active=true ORDER BY table_name,id;"
   },
-  "expiresAt": "2026-09-16T14:45:00Z"
+  "expiresAt": "2026-09-16T14:46:00Z"
 }
