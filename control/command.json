@@ -1,10 +1,10 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "c6843f58-8fe1-48a4-a2b7-cc331cc52f81",
+  "requestId": "68f8a79f-0d5d-4e5a-8dd6-9982262baebf",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
-  "tool": "pg.roberta.query",
+  "tool": "fs.read_text",
   "arguments": {
-    "sql": "SELECT * FROM public.autsys_capabilities_unified ORDER BY source_kind, capability_key LIMIT 12;"
+    "path": "D:\\AUTSYS\\AUTSYS S.R.L.S\\CLIENTI\\AUTSYS S.R.L.S\\05 - AUTSYS PC BRIDGE\\AUTSYS PC BRIDGE\\SERVICE\\APP\\roberta_db_tool.py"
   },
-  "expiresAt": "2026-09-16T14:35:00Z"
+  "expiresAt": "2026-09-16T14:36:00Z"
 }
