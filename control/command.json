@@ -1,11 +1,11 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "ff415ef2-afdd-4679-a18f-c794a0ac23a6",
+  "requestId": "d1565a29-70e7-41ca-911f-ebd365931fe8",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
   "tool": "fs.delete",
   "arguments": {
     "path": "D:\\AUTSYS\\AUTSYS S.R.L.S\\CLIENTI\\AUTSYS S.R.L.S\\05 - AUTSYS PC BRIDGE\\AUTSYS PC BRIDGE\\LOGS\\CHAT_WRITE_TEST.txt",
     "recursive": false
   },
-  "expiresAt": "2026-09-16T08:30:44.463624Z"
+  "expiresAt": "2026-09-16T08:34:52.577848Z"
 }
