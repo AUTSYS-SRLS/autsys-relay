@@ -48,7 +48,7 @@ function normalizeProjectKey(value) {
     .slice(0, 120);
 }
 
-function buildSessionBootstrapSql(args = {}) {
+function parseBootstrapArgs(args = {}) {
   const scope = String(args.scope || "").trim().toUpperCase();
   if (scope !== "GENERAL" && scope !== "PROJECT") {
     throw new Error("session.bootstrap requires scope GENERAL or PROJECT");
@@ -62,42 +62,12 @@ function buildSessionBootstrapSql(args = {}) {
     throw new Error("projectName too long");
   }
 
-  const projectKey = normalizeProjectKey(projectName);
-  const projectWhere = scope === "PROJECT"
-    ? `lower(p.display_name)=lower(${sqlLiteral(projectName)}) OR p.project_key=${sqlLiteral(projectKey)}`
-    : "false";
-
-  return `
-SELECT
-  ${sqlLiteral(scope)}::text AS scope,
-  EXISTS(SELECT 1 FROM public.autsys_project_registry p WHERE ${projectWhere}) AS project_found,
-  (SELECT p.project_key::text FROM public.autsys_project_registry p WHERE ${projectWhere} ORDER BY p.is_authoritative DESC,p.id LIMIT 1) AS project_key,
-  (SELECT p.entity_kind::text FROM public.autsys_project_registry p WHERE ${projectWhere} ORDER BY p.is_authoritative DESC,p.id LIMIT 1) AS project_kind,
-  (SELECT p.lifecycle_status::text FROM public.autsys_project_registry p WHERE ${projectWhere} ORDER BY p.is_authoritative DESC,p.id LIMIT 1) AS project_status,
-  (SELECT p.is_authoritative::text FROM public.autsys_project_registry p WHERE ${projectWhere} ORDER BY p.is_authoritative DESC,p.id LIMIT 1) AS project_authoritative,
-  (SELECT count(*)::int FROM public.plugin_capabilities_server pc WHERE pc.is_enabled=true) AS plugin_capability_count,
-  (SELECT count(*)::int FROM public.autsys_external_capabilities_registry ec WHERE ec.is_enabled=true) AS external_capability_count,
-  COALESCE((
-    SELECT string_agg(
-      concat_ws('|',pc.plugin_key,pc.capability_key,pc.capability_type,pc.capability_level,pc.risk_level,pc.requires_approval::text),
-      E'\\n' ORDER BY pc.plugin_key,pc.capability_key
-    )
-    FROM public.plugin_capabilities_server pc
-    WHERE pc.is_enabled=true
-  ),'') AS plugin_capabilities,
-  COALESCE((
-    SELECT string_agg(
-      concat_ws('|',ec.provider_key,ec.capability_key,ec.capability_type,ec.capability_level,ec.risk_level,ec.requires_approval::text,ec.verification_status),
-      E'\\n' ORDER BY ec.provider_key,ec.capability_key
-    )
-    FROM public.autsys_external_capabilities_registry ec
-    WHERE ec.is_enabled=true
-  ),'') AS external_capabilities;`.trim();
+  return { scope, projectName, projectKey: normalizeProjectKey(projectName) };
 }
 
 async function fetchControlText(ref) {
   const response = await fetch(`${REPO_RAW_BASE}/${ref}/${CONTROL_PATH}`, {
-    headers: { "user-agent": "AUTSYS-PC-BRIDGE-HOT-CONTROL/0.1.0.6" },
+    headers: { "user-agent": "AUTSYS-PC-BRIDGE-HOT-CONTROL/0.1.0.7" },
     signal: AbortSignal.timeout(7000)
   });
   if (!response.ok) {
@@ -110,21 +80,9 @@ async function fetchControlText(ref) {
   return text;
 }
 
-function translateCommand(command) {
-  if (command.tool !== "session.bootstrap") return command;
-
-  return {
-    ...command,
-    tool: "pg.roberta.query",
-    arguments: {
-      sql: buildSessionBootstrapSql(command.arguments || {})
-    }
-  };
-}
-
-async function executeInternal(command) {
-  const effective = translateCommand(command);
-  const internalTimeoutMs = effective.tool === "pg.roberta.migrate" ? 300000 : 15000;
+async function callBridge(command, tool, args = {}, suffix = "") {
+  const internalTimeoutMs = tool === "pg.roberta.migrate" ? 300000 : 15000;
+  const internalRequestId = suffix ? `${command.requestId}:${suffix}` : command.requestId;
   const response = await fetch(`http://127.0.0.1:${INTERNAL_PORT}/api/execute`, {
     method: "POST",
     headers: {
@@ -132,18 +90,150 @@ async function executeInternal(command) {
       "content-type": "application/json"
     },
     body: JSON.stringify({
-      requestId: effective.requestId,
-      bridgeId: effective.bridgeId || undefined,
-      tool: effective.tool,
-      arguments: effective.arguments || {}
+      requestId: internalRequestId,
+      bridgeId: command.bridgeId || undefined,
+      tool,
+      arguments: args
     }),
     signal: AbortSignal.timeout(internalTimeoutMs)
   });
+
   const text = await response.text();
   let body;
   try { body = JSON.parse(text); }
   catch { body = { ok: false, error: text || `HTTP ${response.status}` }; }
-  return { status: response.status, body, effectiveTool: effective.tool };
+  return { status: response.status, body, effectiveTool: tool };
+}
+
+function requireQueryResult(call, label) {
+  const br = call?.body?.bridgeResponse;
+  const result = br?.result;
+  if (call?.status < 200 || call?.status >= 300 || !br?.ok || !result?.ok) {
+    const detail = br?.error || call?.body?.error || result?.message || `HTTP ${call?.status}`;
+    throw new Error(`session.bootstrap ${label} failed: ${typeof detail === "string" ? detail : JSON.stringify(detail)}`);
+  }
+  return result;
+}
+
+function firstRow(result) {
+  return Array.isArray(result?.rows) && result.rows.length ? result.rows[0] : {};
+}
+
+function decodeB64(value) {
+  const raw = String(value || "").trim();
+  return raw ? Buffer.from(raw, "base64").toString("utf8") : "";
+}
+
+function splitLines(value) {
+  return String(value || "").split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+}
+
+async function executeSessionBootstrap(command) {
+  const { scope, projectName, projectKey } = parseBootstrapArgs(command.arguments || {});
+  const projectWhere = scope === "PROJECT"
+    ? `lower(p.display_name)=lower(${sqlLiteral(projectName)}) OR p.project_key=${sqlLiteral(projectKey)}`
+    : "false";
+
+  const summarySql = `
+SELECT
+  ${sqlLiteral(scope)}::text AS scope,
+  EXISTS(SELECT 1 FROM public.autsys_project_registry p WHERE ${projectWhere}) AS project_found,
+  (SELECT p.project_key::text FROM public.autsys_project_registry p WHERE ${projectWhere} ORDER BY p.is_authoritative DESC,p.id LIMIT 1) AS project_key,
+  (SELECT p.entity_kind::text FROM public.autsys_project_registry p WHERE ${projectWhere} ORDER BY p.is_authoritative DESC,p.id LIMIT 1) AS project_kind,
+  (SELECT p.lifecycle_status::text FROM public.autsys_project_registry p WHERE ${projectWhere} ORDER BY p.is_authoritative DESC,p.id LIMIT 1) AS project_status,
+  (SELECT p.is_authoritative::text FROM public.autsys_project_registry p WHERE ${projectWhere} ORDER BY p.is_authoritative DESC,p.id LIMIT 1) AS project_authoritative,
+  (SELECT count(*)::int FROM public.plugin_capabilities_server pc WHERE pc.is_enabled=true) AS plugin_capability_count,
+  (SELECT count(*)::int FROM public.autsys_external_capabilities_registry ec WHERE ec.is_enabled=true) AS external_capability_count,
+  encode(convert_to(COALESCE((SELECT string_agg(DISTINCT pc.plugin_key,E'\\n' ORDER BY pc.plugin_key) FROM public.plugin_capabilities_server pc WHERE pc.is_enabled=true),''),'UTF8'),'base64') AS plugin_keys_b64;`.trim();
+
+  const summaryCall = await callBridge(command, "pg.roberta.query", { sql: summarySql }, "bootstrap-summary");
+  const summaryResult = requireQueryResult(summaryCall, "summary");
+  const summary = firstRow(summaryResult);
+  const pluginKeys = splitLines(decodeB64(summary.plugin_keys_b64));
+
+  const pluginCapabilities = [];
+  for (let i = 0; i < pluginKeys.length; i++) {
+    const pluginKey = pluginKeys[i];
+    const sql = `
+SELECT encode(convert_to(COALESCE(string_agg(
+  concat_ws('|',pc.capability_key,pc.capability_type,pc.capability_level,pc.risk_level,pc.requires_approval::text),
+  E'\\n' ORDER BY pc.capability_key
+),''),'UTF8'),'base64') AS capabilities_b64
+FROM public.plugin_capabilities_server pc
+WHERE pc.is_enabled=true AND pc.plugin_key=${sqlLiteral(pluginKey)};`.trim();
+
+    const call = await callBridge(command, "pg.roberta.query", { sql }, `bootstrap-plugin-${i + 1}`);
+    const result = requireQueryResult(call, `plugin ${pluginKey}`);
+    const compact = decodeB64(firstRow(result).capabilities_b64);
+
+    for (const line of splitLines(compact)) {
+      const [capabilityKey, capabilityType, capabilityLevel, riskLevel, requiresApproval] = line.split("|");
+      pluginCapabilities.push({
+        pluginKey,
+        capabilityKey: capabilityKey || "",
+        capabilityType: capabilityType || "",
+        capabilityLevel: capabilityLevel || "",
+        riskLevel: riskLevel || "",
+        requiresApproval: String(requiresApproval || "").toLowerCase() === "true"
+      });
+    }
+  }
+
+  const externalSql = `
+SELECT encode(convert_to(COALESCE(string_agg(
+  concat_ws('|',ec.provider_key,ec.capability_key,ec.capability_type,ec.capability_level,ec.risk_level,ec.requires_approval::text,ec.verification_status),
+  E'\\n' ORDER BY ec.provider_key,ec.capability_key
+),''),'UTF8'),'base64') AS capabilities_b64
+FROM public.autsys_external_capabilities_registry ec
+WHERE ec.is_enabled=true;`.trim();
+
+  const externalCall = await callBridge(command, "pg.roberta.query", { sql: externalSql }, "bootstrap-external");
+  const externalResult = requireQueryResult(externalCall, "external capabilities");
+  const externalCompact = decodeB64(firstRow(externalResult).capabilities_b64);
+  const externalCapabilities = splitLines(externalCompact).map(line => {
+    const [providerKey, capabilityKey, capabilityType, capabilityLevel, riskLevel, requiresApproval, verificationStatus] = line.split("|");
+    return {
+      providerKey: providerKey || "",
+      capabilityKey: capabilityKey || "",
+      capabilityType: capabilityType || "",
+      capabilityLevel: capabilityLevel || "",
+      riskLevel: riskLevel || "",
+      requiresApproval: String(requiresApproval || "").toLowerCase() === "true",
+      verificationStatus: verificationStatus || ""
+    };
+  });
+
+  return {
+    status: 200,
+    effectiveTool: "session.bootstrap",
+    body: {
+      ok: true,
+      operation: "session.bootstrap",
+      source: "ROBERTA",
+      database: summaryResult.database,
+      scope,
+      project: {
+        requestedName: scope === "PROJECT" ? projectName : null,
+        found: Boolean(summary.project_found),
+        projectKey: summary.project_key || null,
+        entityKind: summary.project_kind || null,
+        lifecycleStatus: summary.project_status || null,
+        authoritative: String(summary.project_authoritative || "").toLowerCase() === "true"
+      },
+      pluginCapabilityCount: Number(summary.plugin_capability_count || 0),
+      externalCapabilityCount: Number(summary.external_capability_count || 0),
+      pluginCapabilities,
+      externalCapabilities,
+      readsPerformed: 2 + pluginKeys.length
+    }
+  };
+}
+
+async function executeInternal(command) {
+  if (command.tool === "session.bootstrap") {
+    return await executeSessionBootstrap(command);
+  }
+  return await callBridge(command, command.tool, command.arguments || {});
 }
 
 async function handleChatPull(req, res, url) {
@@ -252,5 +342,5 @@ server.on("upgrade", (req, socket, head) => {
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`AUTSYS PC BRIDGE FRONT GATEWAY listening on ${PORT}; backend=${INTERNAL_PORT}`);
   console.log("HOT CHAT CONTROL ready at /chat-control/pull");
-  console.log("SESSION BOOTSTRAP ready as session.bootstrap");
+  console.log("SESSION BOOTSTRAP orchestrator ready as session.bootstrap");
 });
