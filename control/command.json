@@ -1,13 +1,10 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "5697cd4e-eaf3-4f6d-94ca-3a748ea2f219",
+  "requestId": "f711c40d-adff-4d79-a55f-4f74c35ed16d",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
-  "tool": "pg.roberta.migrate",
+  "tool": "pg.roberta.query",
   "arguments": {
-    "migrationId": "20260916_AUTSYS_CAPABILITY_VIEW_SECURITY_INVOKER_V1",
-    "description": "Correzione della vista unificata capacita: esecuzione con privilegi dell invocante, senza dipendere dai privilegi temporanei del ruolo migratore disabilitato.",
-    "backupRoot": "D:\\AUTSYS ROBERTA BACKUPS\\PC_BRIDGE",
-    "sql": "CREATE OR REPLACE VIEW public.autsys_capabilities_unified WITH (security_invoker=true) AS\nSELECT\n    'ROBERTA_PLUGIN'::text AS source_kind,\n    capability_public_id::text AS source_public_id,\n    plugin_key::text AS provider_key,\n    capability_key::text AS capability_key,\n    capability_type::text AS capability_type,\n    capability_description::text AS capability_description,\n    capability_level::text AS capability_level,\n    NULL::text AS access_mode,\n    is_enabled::boolean AS is_enabled,\n    requires_approval::boolean AS requires_approval,\n    risk_level::text AS risk_level,\n    policy_json::jsonb AS policy_json,\n    metadata_json::jsonb AS metadata_json\nFROM public.plugin_capabilities_server\nUNION ALL\nSELECT\n    'EXTERNAL'::text,\n    public_id::text,\n    provider_key,\n    capability_key,\n    capability_type,\n    capability_description,\n    capability_level,\n    access_mode,\n    is_enabled,\n    requires_approval,\n    risk_level,\n    policy_json,\n    metadata_json\nFROM public.autsys_external_capabilities_registry;"
+    "sql": "SELECT (SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE') AS actual_tables, (SELECT count(DISTINCT table_name) FROM public.schema_tables_registry WHERE engine='postgresql' AND schema_name='public' AND is_active=true) AS registered_tables, (SELECT count(*) FROM public.schema_registry_reconciliation_live WHERE object_kind='table' AND registry_status='missing') AS missing_tables, (SELECT count(*) FROM public.schema_registry_reconciliation_live WHERE object_kind='column' AND registry_status='missing') AS missing_columns, (SELECT count(*) FROM public.autsys_project_registry) AS projects, (SELECT count(*) FROM public.autsys_project_components) AS components, (SELECT count(*) FROM public.autsys_release_registry) AS releases, (SELECT count(*) FROM public.autsys_external_capabilities_registry) AS external_capabilities, (SELECT count(*) FROM public.autsys_capabilities_unified) AS unified_capabilities, (SELECT count(*) FROM public.schema_migrations_registry WHERE migration_key IN ('20260916_AUTSYS_CENTRAL_CATALOG_V1','20260916_AUTSYS_SCHEMA_REGISTRY_FULL_SYNC_V1','20260916_AUTSYS_CAPABILITY_VIEW_SECURITY_INVOKER_V1') AND migration_status='applied') AS applied_migrations, (SELECT NOT rolcanlogin FROM pg_roles WHERE rolname='autsys_pc_bridge_migrator') AS migrator_disabled;"
   },
-  "expiresAt": "2026-09-16T11:27:00Z"
+  "expiresAt": "2026-09-16T11:28:00Z"
 }
