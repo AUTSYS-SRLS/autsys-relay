@@ -1,10 +1,10 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "204b337f-8fe7-43c7-8a8c-56ce3a6bc93e",
+  "requestId": "c6843f58-8fe1-48a4-a2b7-cc331cc52f81",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
   "tool": "pg.roberta.query",
   "arguments": {
-    "sql": "SELECT * FROM public.autsys_project_registry ORDER BY created_at LIMIT 20;"
+    "sql": "SELECT * FROM public.autsys_capabilities_unified ORDER BY source_kind, capability_key LIMIT 12;"
   },
-  "expiresAt": "2026-09-16T14:34:00Z"
+  "expiresAt": "2026-09-16T14:35:00Z"
 }
