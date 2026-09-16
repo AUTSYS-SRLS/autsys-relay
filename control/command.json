@@ -1,10 +1,10 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "59e4804e-6a95-4124-8f1b-7f7d8a2e21d5",
+  "requestId": "bd7d9d32-88c8-4ed7-8249-8a7d97ba7ed5",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
   "tool": "pg.roberta.query",
   "arguments": {
-    "sql": "SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname='public' AND (tablename LIKE 'autsys_%' OR tablename LIKE 'plugin_%' OR tablename IN ('program_runtime_registry','system_modules_registry','system_runtime_registry')) ORDER BY tablename;"
+    "sql": "SELECT c.relname AS table_name,a.attnum AS ordinal,a.attname AS column_name,pg_catalog.format_type(a.atttypid,a.atttypmod) AS data_type FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid=a.attrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname IN ('autsys_project_registry','autsys_project_data_sources','autsys_external_capabilities_registry','plugin_registry_server','plugin_capabilities_server') AND a.attnum>0 AND NOT a.attisdropped ORDER BY c.relname,a.attnum;"
   },
-  "expiresAt": "2026-09-16T14:31:00Z"
+  "expiresAt": "2026-09-16T14:33:00Z"
 }
