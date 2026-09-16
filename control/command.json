@@ -1,13 +1,8 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "959e9db9-5831-4644-b315-935e8ee5df95",
+  "requestId": "f592aac7-3366-4618-96e0-9aa3e257e65d",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
-  "tool": "fs.write_text",
-  "arguments": {
-    "path": "D:\\AUTSYS\\AUTSYS S.R.L.S\\CLIENTI\\AUTSYS S.R.L.S\\05 - AUTSYS PC BRIDGE\\AUTSYS PC BRIDGE\\SANDBOX\\EXECUTABLES\\NO_APPROVAL_TEST.py",
-    "content": "print('test')",
-    "overwrite": true,
-    "createDirectories": true
-  },
-  "expiresAt": "2026-09-16T09:11:12.641683Z"
+  "tool": "health",
+  "arguments": {},
+  "expiresAt": "2026-09-16T09:13:28.009731Z"
 }
