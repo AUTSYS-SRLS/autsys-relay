@@ -1,10 +1,10 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "109d7ed9-ea1b-4f9f-beda-af7ef2f546f1",
+  "requestId": "33f8b0e8-e13e-4017-a7b1-ca6988ef0d4f",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
   "tool": "pg.roberta.query",
   "arguments": {
-    "sql": "SELECT (SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE') AS actual_tables, (SELECT count(*) FROM public.schema_tables_registry WHERE scope='server' AND engine='postgresql' AND schema_name='public' AND is_active) AS registered_tables, (SELECT count(*) FROM information_schema.columns WHERE table_schema='public') AS actual_columns, (SELECT count(*) FROM public.schema_columns_registry WHERE scope='server' AND engine='postgresql' AND schema_name='public' AND is_active) AS registered_columns;"
+    "sql": "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='plugin_capabilities_server' ORDER BY ordinal_position;"
   },
-  "expiresAt": "2026-09-16T10:54:56.302390Z"
+  "expiresAt": "2026-09-16T10:55:28.505008Z"
 }
