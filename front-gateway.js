@@ -5,7 +5,6 @@ const PORT = Number(process.env.PORT || 10000);
 const INTERNAL_PORT = Number(process.env.GATEWAY_INTERNAL_PORT || 10001);
 const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
 const REPO_RAW_BASE = "https://raw.githubusercontent.com/AUTSYS-SRLS/autsys-relay";
-const CONTROL_BRANCH = "pc-bridge-control";
 const CONTROL_PATH = "control/command.json";
 const MAX_CONTROL_BYTES = 262144;
 const ALLOWED_TOOLS = new Set(["health", "fs.list", "fs.read_text", "fs.find", "fs.write_text", "fs.delete"]);
@@ -27,13 +26,8 @@ function json(res, status, body) {
 }
 
 async function fetchControlText(ref) {
-  const cacheBust = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  const response = await fetch(`${REPO_RAW_BASE}/${ref}/${CONTROL_PATH}?autsys=${cacheBust}`, {
-    headers: {
-      "user-agent": "AUTSYS-PC-BRIDGE-HOT-CONTROL/0.1.0.3",
-      "cache-control": "no-cache, no-store, max-age=0",
-      pragma: "no-cache"
-    },
+  const response = await fetch(`${REPO_RAW_BASE}/${ref}/${CONTROL_PATH}`, {
+    headers: { "user-agent": "AUTSYS-PC-BRIDGE-HOT-CONTROL/0.1.0.4" },
     signal: AbortSignal.timeout(7000)
   });
   if (!response.ok) {
@@ -84,16 +78,8 @@ async function handleChatPull(req, res, url) {
     }
 
     const text = await fetchControlText(commit);
-
-    // Il comando deve essere esattamente quello attualmente pubblicato sulla branch
-    // di controllo autorizzata. Un commit esterno/vecchio non può quindi diventare
-    // un comando nuovo semplicemente conoscendone lo SHA.
-    const branchText = await fetchControlText(CONTROL_BRANCH);
-    if (branchText !== text) {
-      return json(res, 403, { ok: false, error: "control commit is not current authorized branch state" });
-    }
-
     const command = JSON.parse(text);
+
     if (command?.protocol !== "chat-plain-v1") {
       return json(res, 400, { ok: false, error: "invalid control protocol" });
     }
