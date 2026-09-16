@@ -1,10 +1,10 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "bf1f94d7-62e8-472e-87d0-7b527c4853d1",
+  "requestId": "d1ecf719-b5b8-47c2-a259-433eb78ffdb2",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
-  "tool": "pg.roberta.query",
+  "tool": "fs.read_text",
   "arguments": {
-    "sql": "SELECT relname, relacl::text FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND relname IN ('plugin_capabilities_server','schema_tables_registry','schema_columns_registry');"
+    "path": "D:\\AUTSYS\\AUTSYS S.R.L.S\\CLIENTI\\AUTSYS S.R.L.S\\05 - AUTSYS PC BRIDGE\\AUTSYS PC BRIDGE\\SERVICE\\APP\\roberta_db_tool.py"
   },
-  "expiresAt": "2026-09-16T11:08:00Z"
+  "expiresAt": "2026-09-16T11:21:00Z"
 }
