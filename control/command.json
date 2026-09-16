@@ -1,10 +1,10 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "03f0cbf1-ea7c-4588-ab11-73479f44e143",
+  "requestId": "2dd8bc49-d64b-4f82-910b-955a6adf1771",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
   "tool": "pg.roberta.query",
   "arguments": {
-    "sql": "SELECT octet_length(COALESCE(input_schema_json::text,'')) AS input_bytes, octet_length(COALESCE(output_schema_json::text,'')) AS output_bytes, octet_length(COALESCE(policy_json::text,'')) AS policy_bytes, octet_length(COALESCE(metadata_json::text,'')) AS metadata_bytes, input_schema_json->>'type' AS input_type, input_schema_json->'required' AS required_fields FROM public.plugin_registry_server WHERE plugin_key='plugin_database_manager';"
+    "sql": "SELECT input_schema_json::text AS input_schema, output_schema_json::text AS output_schema, policy_json::text AS policy FROM public.plugin_registry_server WHERE plugin_key='plugin_database_manager';"
   },
-  "expiresAt": "2026-09-16T15:29:00Z"
+  "expiresAt": "2026-09-16T15:30:00Z"
 }
