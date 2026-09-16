@@ -1,10 +1,10 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "35a16172-4a4a-49a8-974f-b04ea366f027",
+  "requestId": "939285a6-280c-4c4d-925c-f78b108bd8ef",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
   "tool": "pg.roberta.query",
   "arguments": {
     "sql": "SELECT (SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE') AS actual_tables, (SELECT count(DISTINCT table_name) FROM public.schema_tables_registry WHERE engine='postgresql' AND schema_name='public' AND is_active=true) AS registered_tables, (SELECT count(*) FROM public.schema_registry_reconciliation_live WHERE object_kind='table' AND registry_status='missing') AS missing_tables, (SELECT count(*) FROM information_schema.columns c JOIN information_schema.tables t ON t.table_schema=c.table_schema AND t.table_name=c.table_name AND t.table_type='BASE TABLE' WHERE c.table_schema='public') AS actual_columns, (SELECT count(*) FROM public.schema_registry_reconciliation_live WHERE object_kind='column' AND registry_status='missing') AS missing_columns, (SELECT count(*) FROM public.autsys_project_registry) AS project_rows, (SELECT count(*) FROM public.autsys_external_capabilities_registry) AS external_capabilities, (SELECT count(*) FROM public.schema_table_knowledge_registry WHERE created_by_migration='20260916_AUTSYS_CENTRAL_CATALOG_V1') AS knowledge_rows, (SELECT count(*) FROM public.schema_migrations_registry WHERE migration_key='20260916_AUTSYS_CENTRAL_CATALOG_V1' AND migration_status='applied') AS migration_recorded;"
   },
-  "expiresAt": "2026-09-16T11:28:00Z"
+  "expiresAt": "2026-09-16T11:25:00Z"
 }
