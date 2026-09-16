@@ -1,4 +1,5 @@
 import http from "node:http";
+import net from "node:net";
 import crypto from "node:crypto";
 
 const PORT = Number(process.env.PORT || 10000);
@@ -169,6 +170,23 @@ const server = http.createServer(async (req, res) => {
     console.error(`WORK_DB_FRONT error: ${String(err?.message || err)}`);
     return html(res, 500, page({ ok: false, error: String(err?.message || err) }, "Errore"));
   }
+});
+
+
+server.on("upgrade", (req, socket, head) => {
+  const upstream = net.connect(GATEWAY_INTERNAL_PORT, "127.0.0.1", () => {
+    let request = `${req.method} ${req.url} HTTP/${req.httpVersion}\r\n`;
+    for (let i = 0; i < req.rawHeaders.length; i += 2) {
+      request += `${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}\r\n`;
+    }
+    request += "\r\n";
+    upstream.write(request);
+    if (head?.length) upstream.write(head);
+    socket.pipe(upstream).pipe(socket);
+  });
+
+  upstream.on("error", () => socket.destroy());
+  socket.on("error", () => upstream.destroy());
 });
 
 server.listen(PORT, "0.0.0.0", () => {
