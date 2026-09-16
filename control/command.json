@@ -1,10 +1,10 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "f72f8fc3-c1c7-419d-97af-9cd8736d5b07",
+  "requestId": "bfb7474c-46c5-4a0e-a281-bd423eeecfcc",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
-  "tool": "fs.read_text",
+  "tool": "pg.roberta.query",
   "arguments": {
-    "path": "D:\\AUTSYS\\AUTSYS S.R.L.S\\CLIENTI\\AUTSYS S.R.L.S\\05 - AUTSYS PC BRIDGE\\AUTSYS PC BRIDGE\\COSTRUISCI_TEST.cmd"
+    "sql": "SELECT has_table_privilege('autsys_pc_bridge_migrator','public.autsys_project_registry','SELECT') AS can_select, has_table_privilege('autsys_pc_bridge_migrator','public.autsys_project_registry','INSERT') AS can_insert, has_table_privilege('autsys_pc_bridge_migrator','public.autsys_project_registry','UPDATE') AS can_update, has_sequence_privilege('autsys_pc_bridge_migrator','public.autsys_project_registry_id_seq','USAGE') AS can_sequence;"
   },
   "expiresAt": "2026-09-16T16:47:00Z"
 }
