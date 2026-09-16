@@ -1,10 +1,10 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "a8d2d810-3e2b-4c91-8df8-7f7018e4276d",
+  "requestId": "488e67d0-742f-4be6-92ad-b383ce9def8e",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
   "tool": "pg.roberta.query",
   "arguments": {
-    "sql": "SELECT 1 AS ok;"
+    "sql": "SELECT count(*) AS n FROM public.plugin_capabilities_server;"
   },
-  "expiresAt": "2026-09-16T14:44:00Z"
+  "expiresAt": "2026-09-16T14:45:00Z"
 }
