@@ -16,7 +16,8 @@ const ALLOWED_TOOLS = new Set([
   "fs.delete",
   "pg.roberta.query",
   "pg.roberta.migrate",
-  "session.bootstrap"
+  "session.bootstrap",
+  "project.register"
 ]);
 const processed = new Set();
 
@@ -39,6 +40,10 @@ function sqlLiteral(value) {
   return `'${String(value).replaceAll("'", "''")}'`;
 }
 
+function sqlNullable(value) {
+  return value == null ? "NULL" : sqlLiteral(value);
+}
+
 function normalizeProjectKey(value) {
   return String(value || "")
     .trim()
@@ -46,6 +51,14 @@ function normalizeProjectKey(value) {
     .replace(/[^A-Z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "")
     .slice(0, 120);
+}
+
+function optionalText(args, name, maxLength) {
+  if (args[name] == null) return null;
+  const value = String(args[name]).trim();
+  if (!value) return null;
+  if (value.length > maxLength) throw new Error(`${name} too long`);
+  return value;
 }
 
 function parseBootstrapArgs(args = {}) {
@@ -65,9 +78,48 @@ function parseBootstrapArgs(args = {}) {
   return { scope, projectName, projectKey: normalizeProjectKey(projectName) };
 }
 
+function parseProjectRegisterArgs(args = {}) {
+  const projectName = String(args.projectName || "").trim();
+  if (!projectName) throw new Error("project.register requires projectName");
+  if (projectName.length > 240) throw new Error("projectName too long");
+
+  const projectKey = normalizeProjectKey(args.projectKey || projectName);
+  if (!projectKey) throw new Error("project.register could not derive projectKey");
+
+  const entityKind = String(args.entityKind || "").trim().toUpperCase();
+  if (!entityKind) throw new Error("project.register requires entityKind");
+  if (!/^[A-Z][A-Z0-9_.-]{0,79}$/.test(entityKind)) {
+    throw new Error("entityKind must be 1-80 characters: A-Z, 0-9, _, ., -");
+  }
+
+  let isAuthoritative = true;
+  if (args.isAuthoritative != null) {
+    if (typeof args.isAuthoritative === "boolean") {
+      isAuthoritative = args.isAuthoritative;
+    } else if (String(args.isAuthoritative).toLowerCase() === "true") {
+      isAuthoritative = true;
+    } else if (String(args.isAuthoritative).toLowerCase() === "false") {
+      isAuthoritative = false;
+    } else {
+      throw new Error("isAuthoritative must be boolean");
+    }
+  }
+
+  return {
+    projectName,
+    projectKey,
+    entityKind,
+    rootPath: optionalText(args, "rootPath", 1024),
+    repositoryUrl: optionalText(args, "repositoryUrl", 2048),
+    repositoryBranch: optionalText(args, "repositoryBranch", 255),
+    description: optionalText(args, "description", 4000),
+    isAuthoritative
+  };
+}
+
 async function fetchControlText(ref) {
   const response = await fetch(`${REPO_RAW_BASE}/${ref}/${CONTROL_PATH}`, {
-    headers: { "user-agent": "AUTSYS-PC-BRIDGE-HOT-CONTROL/0.1.0.8" },
+    headers: { "user-agent": "AUTSYS-PC-BRIDGE-HOT-CONTROL/0.1.0.9" },
     signal: AbortSignal.timeout(7000)
   });
   if (!response.ok) {
@@ -105,14 +157,18 @@ async function callBridge(command, tool, args = {}, suffix = "") {
   return { status: response.status, body, effectiveTool: tool };
 }
 
-function requireQueryResult(call, label) {
+function requireBridgeResult(call, label, operation) {
   const br = call?.body?.bridgeResponse;
   const result = br?.result;
   if (call?.status < 200 || call?.status >= 300 || !br?.ok || !result?.ok) {
-    const detail = br?.error || call?.body?.error || result?.message || `HTTP ${call?.status}`;
-    throw new Error(`session.bootstrap ${label} failed: ${typeof detail === "string" ? detail : JSON.stringify(detail)}`);
+    const detail = br?.error || call?.body?.error || result?.message || result?.error || `HTTP ${call?.status}`;
+    throw new Error(`${operation} ${label} failed: ${typeof detail === "string" ? detail : JSON.stringify(detail)}`);
   }
   return result;
+}
+
+function requireQueryResult(call, label) {
+  return requireBridgeResult(call, label, "session.bootstrap");
 }
 
 function firstRow(result) {
@@ -126,6 +182,119 @@ function decodeB64(value) {
 
 function splitLines(value) {
   return String(value || "").split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+}
+
+function projectRow(row = {}) {
+  return {
+    projectKey: row.project_key || null,
+    displayName: row.display_name || null,
+    entityKind: row.entity_kind || null,
+    lifecycleStatus: row.lifecycle_status || null,
+    rootPath: row.root_path || null,
+    repositoryUrl: row.repository_url || null,
+    repositoryBranch: row.repository_branch || null,
+    description: row.description || null,
+    authoritative: Boolean(row.is_authoritative),
+    publicId: row.public_id || null
+  };
+}
+
+async function executeProjectRegister(command) {
+  const args = parseProjectRegisterArgs(command.arguments || {});
+  const lookupSql = `
+SELECT public_id::text,project_key,display_name,entity_kind,lifecycle_status,root_path,repository_url,repository_branch,description,is_authoritative
+FROM public.autsys_project_registry
+WHERE project_key=${sqlLiteral(args.projectKey)} OR lower(display_name)=lower(${sqlLiteral(args.projectName)})
+ORDER BY CASE WHEN project_key=${sqlLiteral(args.projectKey)} THEN 0 ELSE 1 END,id
+LIMIT 1;`.trim();
+
+  const beforeCall = await callBridge(command, "pg.roberta.query", { sql: lookupSql }, "project-register-precheck");
+  const beforeResult = requireBridgeResult(beforeCall, "precheck", "project.register");
+  if (Array.isArray(beforeResult.rows) && beforeResult.rows.length) {
+    return {
+      status: 200,
+      effectiveTool: "project.register",
+      body: {
+        ok: true,
+        operation: "project.register",
+        database: beforeResult.database,
+        created: false,
+        alreadyExisted: true,
+        project: projectRow(beforeResult.rows[0])
+      }
+    };
+  }
+
+  const migrationId = `AUTSYS_PROJECT_REGISTER_${args.projectKey}_${String(command.requestId).replaceAll("-", "")}`;
+  const registrationSql = `
+INSERT INTO public.autsys_project_registry
+(project_key,display_name,entity_kind,lifecycle_status,root_path,repository_url,repository_branch,description,is_authoritative,metadata_json)
+VALUES (
+  ${sqlLiteral(args.projectKey)},
+  ${sqlLiteral(args.projectName)},
+  ${sqlLiteral(args.entityKind)},
+  'active',
+  ${sqlNullable(args.rootPath)},
+  ${sqlNullable(args.repositoryUrl)},
+  ${sqlNullable(args.repositoryBranch)},
+  ${sqlNullable(args.description)},
+  ${args.isAuthoritative ? "true" : "false"},
+  jsonb_build_object(
+    'registered_by','chatgpt_session_bootstrap',
+    'registration_request_id',${sqlLiteral(command.requestId)}
+  )
+)
+ON CONFLICT (project_key) DO NOTHING;`.trim();
+
+  const migrationCall = await callBridge(command, "pg.roberta.migrate", {
+    migrationId,
+    sql: registrationSql,
+    description: `Direct project registration from ChatGPT session bootstrap: ${args.projectKey}`
+  }, "project-register-write");
+  const migrationResult = requireBridgeResult(migrationCall, "write", "project.register");
+
+  const verifyCall = await callBridge(command, "pg.roberta.query", { sql: lookupSql }, "project-register-verify");
+  const verifyResult = requireBridgeResult(verifyCall, "verify", "project.register");
+  if (!Array.isArray(verifyResult.rows) || !verifyResult.rows.length) {
+    throw new Error("project.register verify failed: project not found after write");
+  }
+
+  const verified = verifyResult.rows[0];
+  if (verified.project_key !== args.projectKey || verified.display_name !== args.projectName || verified.entity_kind !== args.entityKind) {
+    return {
+      status: 409,
+      effectiveTool: "project.register",
+      body: {
+        ok: false,
+        operation: "project.register",
+        error: "project key/name conflict after concurrent registration",
+        requested: {
+          projectKey: args.projectKey,
+          displayName: args.projectName,
+          entityKind: args.entityKind
+        },
+        existing: projectRow(verified)
+      }
+    };
+  }
+
+  return {
+    status: 200,
+    effectiveTool: "project.register",
+    body: {
+      ok: true,
+      operation: "project.register",
+      database: verifyResult.database,
+      created: true,
+      alreadyExisted: false,
+      project: projectRow(verified),
+      migration: {
+        migrationId,
+        applied: migrationResult.applied ?? true,
+        backupPath: migrationResult.backupPath || migrationResult.backup || null
+      }
+    }
+  };
 }
 
 async function executeSessionBootstrap(command) {
@@ -257,6 +426,9 @@ async function executeInternal(command) {
   if (command.tool === "session.bootstrap") {
     return await executeSessionBootstrap(command);
   }
+  if (command.tool === "project.register") {
+    return await executeProjectRegister(command);
+  }
   return await callBridge(command, command.tool, command.arguments || {});
 }
 
@@ -367,4 +539,5 @@ server.listen(PORT, "0.0.0.0", () => {
   console.log(`AUTSYS PC BRIDGE FRONT GATEWAY listening on ${PORT}; backend=${INTERNAL_PORT}`);
   console.log("HOT CHAT CONTROL ready at /chat-control/pull");
   console.log("SESSION BOOTSTRAP orchestrator ready as session.bootstrap");
+  console.log("DIRECT PROJECT REGISTRATION ready as project.register");
 });
