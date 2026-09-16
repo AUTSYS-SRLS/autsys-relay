@@ -27,8 +27,13 @@ function json(res, status, body) {
 }
 
 async function fetchControlText(ref) {
-  const response = await fetch(`${REPO_RAW_BASE}/${ref}/${CONTROL_PATH}`, {
-    headers: { "user-agent": "AUTSYS-PC-BRIDGE-HOT-CONTROL/0.1.0.2" },
+  const cacheBust = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const response = await fetch(`${REPO_RAW_BASE}/${ref}/${CONTROL_PATH}?autsys=${cacheBust}`, {
+    headers: {
+      "user-agent": "AUTSYS-PC-BRIDGE-HOT-CONTROL/0.1.0.3",
+      "cache-control": "no-cache, no-store, max-age=0",
+      pragma: "no-cache"
+    },
     signal: AbortSignal.timeout(7000)
   });
   if (!response.ok) {
