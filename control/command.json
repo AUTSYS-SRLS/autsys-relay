@@ -1,10 +1,10 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "c2a29fb6-812c-4e6a-b7c4-cffcc297903b",
+  "requestId": "aa86c1cc-5f61-4108-b24b-6f127eb7c75a",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
   "tool": "pg.roberta.query",
   "arguments": {
-    "sql": "SELECT conname,pg_get_constraintdef(oid) AS definition FROM pg_constraint WHERE conrelid='public.autsys_project_registry'::regclass AND contype='c' ORDER BY conname;"
+    "sql": "SELECT table_name,column_name,data_type FROM information_schema.columns WHERE table_schema='public' AND table_name IN ('program_runtime_registry','system_runtime_registry','system_modules_registry') ORDER BY table_name,ordinal_position;"
   },
-  "expiresAt": "2026-09-16T15:35:00Z"
+  "expiresAt": "2026-09-16T15:37:00Z"
 }
