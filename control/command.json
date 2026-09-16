@@ -1,10 +1,10 @@
 {
   "protocol": "chat-plain-v1",
-  "requestId": "bd5911dd-8344-4dfb-ad4d-c86a01e2b540",
+  "requestId": "7dfd3e8b-1b71-4e59-90b1-9c5d8f5670fc",
   "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
   "tool": "pg.roberta.query",
   "arguments": {
-    "sql": "WITH candidates AS (SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE' AND (table_name ~* '(project|product|release|artifact|capabil|component|program|system|schema_|migration|registry|audit)')) SELECT current_database() AS database_name, (SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE') AS public_table_count, (SELECT jsonb_agg(table_name ORDER BY table_name) FROM candidates) AS candidate_tables, (SELECT jsonb_agg(jsonb_build_object('table',table_name,'column',column_name,'type',data_type,'udt',udt_name,'nullable',is_nullable,'default',column_default) ORDER BY table_name,ordinal_position) FROM information_schema.columns WHERE table_schema='public' AND table_name IN (SELECT table_name FROM candidates)) AS candidate_columns;"
+    "sql": "SELECT current_database() AS database_name, current_user AS db_user, (SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE') AS public_table_count;"
   },
-  "expiresAt": "2026-09-16T10:47:09.584202Z"
+  "expiresAt": "2026-09-16T10:47:57.384658Z"
 }
