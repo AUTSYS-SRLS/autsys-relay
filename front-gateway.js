@@ -15,6 +15,7 @@ const ALLOWED_TOOLS = new Set([
   "fs.write_text",
   "fs.delete",
   "pg.roberta.query",
+  "pg.roberta.write",
   "pg.roberta.migrate",
   "session.bootstrap",
   "project.register"
@@ -133,7 +134,7 @@ async function fetchControlText(ref) {
 }
 
 async function callBridge(command, tool, args = {}, suffix = "") {
-  const internalTimeoutMs = tool === "pg.roberta.migrate" ? 300000 : 15000;
+  const internalTimeoutMs = tool === "pg.roberta.migrate" ? 300000 : tool === "pg.roberta.write" ? 60000 : 15000;
   const internalRequestId = suffix ? `${command.requestId}:${suffix}` : command.requestId;
   const response = await fetch(`http://127.0.0.1:${INTERNAL_PORT}/api/execute`, {
     method: "POST",
