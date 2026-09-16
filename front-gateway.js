@@ -5,8 +5,10 @@ const PORT = Number(process.env.PORT || 10000);
 const INTERNAL_PORT = Number(process.env.GATEWAY_INTERNAL_PORT || 10001);
 const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
 const REPO_RAW_BASE = "https://raw.githubusercontent.com/AUTSYS-SRLS/autsys-relay";
+const CONTROL_BRANCH = "pc-bridge-control";
 const CONTROL_PATH = "control/command.json";
-const ALLOWED_TOOLS = new Set(["health", "fs.list", "fs.read_text", "fs.find"]);
+const MAX_CONTROL_BYTES = 262144;
+const ALLOWED_TOOLS = new Set(["health", "fs.list", "fs.read_text", "fs.find", "fs.write_text", "fs.delete"]);
 const processed = new Set();
 
 if (!CONTROL_TOKEN) {
@@ -22,6 +24,21 @@ function json(res, status, body) {
     "cache-control": "no-store"
   });
   res.end(payload);
+}
+
+async function fetchControlText(ref) {
+  const response = await fetch(`${REPO_RAW_BASE}/${ref}/${CONTROL_PATH}`, {
+    headers: { "user-agent": "AUTSYS-PC-BRIDGE-HOT-CONTROL/0.1.0.2" },
+    signal: AbortSignal.timeout(7000)
+  });
+  if (!response.ok) {
+    throw new Error(`control source HTTP ${response.status}`);
+  }
+  const text = await response.text();
+  if (!text || Buffer.byteLength(text, "utf8") > MAX_CONTROL_BYTES) {
+    throw new Error("invalid control payload size");
+  }
+  return text;
 }
 
 async function executeInternal(command) {
@@ -61,18 +78,14 @@ async function handleChatPull(req, res, url) {
       return json(res, 409, { ok: false, error: "request already processed" });
     }
 
-    const rawUrl = `${REPO_RAW_BASE}/${commit}/${CONTROL_PATH}`;
-    const source = await fetch(rawUrl, {
-      headers: { "user-agent": "AUTSYS-PC-BRIDGE-HOT-CONTROL/0.1.0.1" },
-      signal: AbortSignal.timeout(7000)
-    });
-    if (!source.ok) {
-      return json(res, 502, { ok: false, error: `control source HTTP ${source.status}` });
-    }
+    const text = await fetchControlText(commit);
 
-    const text = await source.text();
-    if (!text || text.length > 65536) {
-      return json(res, 400, { ok: false, error: "invalid control payload size" });
+    // Il comando deve essere esattamente quello attualmente pubblicato sulla branch
+    // di controllo autorizzata. Un commit esterno/vecchio non può quindi diventare
+    // un comando nuovo semplicemente conoscendone lo SHA.
+    const branchText = await fetchControlText(CONTROL_BRANCH);
+    if (branchText !== text) {
+      return json(res, 403, { ok: false, error: "control commit is not current authorized branch state" });
     }
 
     const command = JSON.parse(text);
