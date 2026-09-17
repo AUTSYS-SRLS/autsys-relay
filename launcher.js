@@ -51,5 +51,5 @@ start("front-gateway", "front-gateway.js", { PORT: legacyFrontPort, GATEWAY_INTE
 start("work-front", "work-front.js", { PORT: workFrontPort, LEGACY_FRONT_PORT: legacyFrontPort, GATEWAY_INTERNAL_PORT: internalPort });
 start("work-db-front", "work-db-front.js", { PORT: workDbFrontPort, WORK_FRONT_PORT: workFrontPort, GATEWAY_INTERNAL_PORT: internalPort });
 start("work-bootstrap-front", "work-bootstrap-front.js", { PORT: workBootstrapPort, WORK_DB_FRONT_PORT: workDbFrontPort, GATEWAY_INTERNAL_PORT: internalPort });
-start("mcp-full-front", "mcp-full-front-v2.js", { PORT: mcpFullPort, GATEWAY_INTERNAL_PORT: internalPort });
+start("mcp-full-front", "mcp-full-front-v3.js", { PORT: mcpFullPort, GATEWAY_INTERNAL_PORT: internalPort });
 start("mcp-auth-front", "mcp-auth-front.js", { PORT: publicPort, WORK_BOOTSTRAP_PORT: workBootstrapPort, MCP_FULL_PORT: mcpFullPort, GATEWAY_INTERNAL_PORT: internalPort });
