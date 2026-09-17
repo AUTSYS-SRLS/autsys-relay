@@ -21,7 +21,10 @@ const ALLOWED_TOOLS = new Set([
   "fs.delete",
   "pg.roberta.query",
   "pg.roberta.write",
-  "session.bootstrap"
+  "session.bootstrap",
+  "project.register",
+  "bridge.update.stage",
+  "bridge.update.apply"
 ]);
 const WRITE_TOOLS = new Set(["fs.write_text", "fs.delete", "pg.roberta.write", "bridge.update.stage", "bridge.update.apply"]);
 
