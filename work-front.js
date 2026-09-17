@@ -201,7 +201,7 @@ function buildArguments(tool, form) {
 }
 async function callBridge(tool, args) {
   const requestId = crypto.randomUUID();
-  const response = await fetch(`http://127.0.0.1:${GATEWAY_INTERNAL_PORT}/api/execute`, {
+  const response = await fetch(`http://127.0.0.1:${LEGACY_FRONT_PORT}/internal/execute`, {
     method: "POST",
     headers: { authorization: `Bearer ${CONTROL_TOKEN}`, "content-type": "application/json" },
     body: JSON.stringify({ requestId, tool, arguments: args }),
