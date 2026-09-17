@@ -134,7 +134,7 @@ async function fetchControlText(ref) {
 }
 
 async function callBridge(command, tool, args = {}, suffix = "") {
-  const internalTimeoutMs = tool === "pg.roberta.migrate" ? 300000 : tool === "pg.roberta.write" ? 60000 : 15000;
+  const internalTimeoutMs = tool === "pg.roberta.migrate" || tool === "bridge.update.apply" ? 300000 : tool === "pg.roberta.write" ? 60000 : 15000;
   const internalRequestId = suffix ? `${command.requestId}:${suffix}` : command.requestId;
   const response = await fetch(`http://127.0.0.1:${INTERNAL_PORT}/api/execute`, {
     method: "POST",
@@ -540,5 +540,5 @@ server.listen(PORT, "0.0.0.0", () => {
   console.log(`AUTSYS PC BRIDGE FRONT GATEWAY listening on ${PORT}; backend=${INTERNAL_PORT}`);
   console.log("HOT CHAT CONTROL ready at /chat-control/pull");
   console.log("SESSION BOOTSTRAP orchestrator ready as session.bootstrap");
-  console.log("DIRECT PROJECT REGISTRATION ready as project.register");
+  console.log("DIRECT LOCAL PROJECT REGISTRATION forwarded as project.register");\n  console.log("PRIVILEGED BRIDGE UPDATER forwarded as bridge.update.stage/apply");
 });
