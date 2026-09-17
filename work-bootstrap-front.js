@@ -267,7 +267,7 @@ function bootstrapCard(result, error) {
   const headline = result.scope === "PROJECT"
     ? `PROJECT — ${p.requestedName || p.projectKey || "?"} — ${p.found ? "REGISTRATO" : "REGISTRAZIONE RICHIESTA"}`
     : "GENERAL";
-  return `<div class="card" style="border-color:#16a34a"><h2>BOOTSTRAP AUTOMATICO — OK</h2><p><strong>${esc(headline)}</strong></p><p class="muted">ROBERTA: ${esc(result.database || "roberta")} · capacità plugin ${esc(result.pluginCapabilityCount)} · capacità esterne ${esc(result.externalCapabilityCount)} · ${esc(result.completedAt)}</p><details><summary>Dettaglio bootstrap</summary><pre>${esc(JSON.stringify(result, null, 2))}</pre></details></div>`;
+  return `<div class="card" style="border-color:#16a34a"><h2>BOOTSTRAP AUTOMATICO — OK</h2><p><strong>${esc(headline)}</strong></p><p class="muted">ROBERTA: ${esc(result.database || "roberta")} · capacità plugin ${esc(result.pluginCapabilityCount)} · capacità esterne ${esc(result.externalCapabilityCount)} · ${esc(result.completedUtc || result.completedAt)}</p><details><summary>Dettaglio bootstrap</summary><pre>${esc(JSON.stringify(result, null, 2))}</pre></details></div>`;
 }
 
 function proxy(req, res, options = {}) {
