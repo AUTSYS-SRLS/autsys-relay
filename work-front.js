@@ -10,7 +10,7 @@ const PANEL_ACCESS_KEY = process.env.PANEL_ACCESS_KEY || "";
 const PANEL_SESSION_SECRET = process.env.PANEL_SESSION_SECRET || "";
 const SESSION_COOKIE = "autsys_work_session";
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
-const MAX_BODY_BYTES = 1024 * 1024;
+const MAX_BODY_BYTES = 40 * 1024 * 1024;
 
 const ALLOWED_TOOLS = new Set([
   "health",
@@ -23,7 +23,7 @@ const ALLOWED_TOOLS = new Set([
   "pg.roberta.write",
   "session.bootstrap"
 ]);
-const WRITE_TOOLS = new Set(["fs.write_text", "fs.delete", "pg.roberta.write"]);
+const WRITE_TOOLS = new Set(["fs.write_text", "fs.delete", "pg.roberta.write", "bridge.update.stage", "bridge.update.apply"]);
 
 if (!CONTROL_TOKEN || !PANEL_ACCESS_KEY || !PANEL_SESSION_SECRET) {
   console.error("WORK FRONT disabled: missing CONTROL_TOKEN, PANEL_ACCESS_KEY or PANEL_SESSION_SECRET");
@@ -102,7 +102,7 @@ function loginPage(message = "") {
 }
 function panelPage(result = null, resultTitle = "Risultato") {
   const output = result == null ? "" : `<div class="card"><h2>${esc(resultTitle)}</h2><pre>${esc(JSON.stringify(result, null, 2))}</pre></div>`;
-  return layout("AUTSYS PC BRIDGE — Work", `<div class="top"><div><h1>AUTSYS PC BRIDGE — Work</h1><div class="muted">Interfaccia controllata per ChatGPT Work</div></div><form method="post" action="/work/logout"><button type="submit">ESCI</button></form></div><div class="card"><p><strong>Disponibili:</strong> health, file tools, pg.roberta.query, pg.roberta.write, session.bootstrap.</p><p class="warn"><strong>Governance:</strong> nessuna shell libera e nessun SQL libero di scrittura; migrazioni e registrazione progetti restano nell’estensione DB protetta.</p></div><div class="grid">
+  return layout("AUTSYS PC BRIDGE — Work", `<div class="top"><div><h1>AUTSYS PC BRIDGE — Work</h1><div class="muted">Interfaccia controllata per ChatGPT Work</div></div><form method="post" action="/work/logout"><button type="submit">ESCI</button></form></div><div class="card"><p><strong>Disponibili:</strong> health, file tools, pg.roberta.query/write, project bootstrap, bridge.update.stage/apply.</p><p class="warn"><strong>Governance:</strong> nessuna shell libera e nessun SQL libero di scrittura; migrazioni e registrazione progetti restano nell’estensione DB protetta.</p></div><div class="grid">
 <div class="card"><h2>Stato Bridge</h2><form method="post" action="/work/run"><input type="hidden" name="tool" value="health"><button>HEALTH</button></form></div>
 <div class="card"><h2>Elenca cartella</h2><form method="post" action="/work/run"><input type="hidden" name="tool" value="fs.list"><label>Percorso</label><input name="path" required><button>ELENCA</button></form></div>
 <div class="card"><h2>Leggi file</h2><form method="post" action="/work/run"><input type="hidden" name="tool" value="fs.read_text"><label>Percorso file</label><input name="path" required><button>LEGGI</button></form></div>
@@ -111,7 +111,7 @@ function panelPage(result = null, resultTitle = "Risultato") {
 <div class="card"><h2>Elimina file</h2><form method="post" action="/work/run"><input type="hidden" name="tool" value="fs.delete"><label>Percorso file</label><input name="path" required><label><input style="width:auto" type="checkbox" name="confirm" value="YES" required> Confermo l'eliminazione</label><button class="danger">ELIMINA</button></form></div>
 <div class="card"><h2>Query ROBERTA</h2><form method="post" action="/work/run"><input type="hidden" name="tool" value="pg.roberta.query"><label>SQL sola lettura</label><textarea name="sql" required></textarea><button>ESEGUI QUERY</button></form></div>
 <div class="card"><h2>Scrittura dati ROBERTA</h2><form method="post" action="/work/run"><input type="hidden" name="tool" value="pg.roberta.write"><label>Richiesta JSON strutturata</label><textarea name="writeJson" required></textarea><label><input style="width:auto" type="checkbox" name="confirm" value="YES" required> Confermo la scrittura dati</label><button class="danger">ESEGUI SCRITTURA</button></form></div>
-<div class="card"><h2>Session bootstrap</h2><form method="post" action="/work/run"><input type="hidden" name="tool" value="session.bootstrap"><label>Ambito</label><select name="scope"><option>GENERAL</option><option>PROJECT</option></select><label>Nome progetto (solo PROJECT)</label><input name="projectName"><button>BOOTSTRAP</button></form></div>
+<div class="card"><h2>Staging aggiornamento Bridge</h2><form method="post" action="/work/run"><input type="hidden" name="tool" value="bridge.update.stage"><label>Richiesta JSON strutturata</label><textarea name="updateJsonStage" required></textarea><label><input style="width:auto" type="checkbox" name="confirm" value="YES" required> Confermo lo staging</label><button class="danger">STAGE UPDATE</button></form></div>\n<div class="card"><h2>Applica aggiornamento Bridge</h2><form method="post" action="/work/run"><input type="hidden" name="tool" value="bridge.update.apply"><label>Richiesta JSON strutturata</label><textarea name="updateJsonApply" required></textarea><label><input style="width:auto" type="checkbox" name="confirm" value="YES" required> Confermo aggiornamento governato</label><button class="danger">APPLICA UPDATE</button></form></div>\n<div class="card"><h2>Session bootstrap</h2><form method="post" action="/work/run"><input type="hidden" name="tool" value="session.bootstrap"><label>Ambito</label><select name="scope"><option>GENERAL</option><option>PROJECT</option></select><label>Nome progetto (solo PROJECT)</label><input name="projectName"><button>BOOTSTRAP</button></form></div>
 </div>${output}`);
 }
 async function readForm(req) {
@@ -158,6 +158,28 @@ function parseWriteArguments(form) {
   return args;
 }
 
+function parseUpdaterArguments(tool, form) {
+  const field = tool === "bridge.update.stage" ? "updateJsonStage" : "updateJsonApply";
+  const text = String(form.get(field) || "").trim();
+  if (!text || text.length > 38 * 1024 * 1024) throw new Error("updater JSON missing or too large");
+  let args;
+  try { args = JSON.parse(text); } catch { throw new Error("updater JSON invalid"); }
+  if (!args || typeof args !== "object" || Array.isArray(args)) throw new Error("updater JSON must be an object");
+  const allowed = tool === "bridge.update.stage"
+    ? new Set(["updateId","relativePath","contentBase64","sha256"])
+    : new Set(["productId","currentVersion","targetVersion","files","updateId","expiresAt","dryRun","validationMode"]);
+  for (const key of Object.keys(args)) if (!allowed.has(key)) throw new Error(`updater field not allowed: ${key}`);
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{7,99}$/.test(String(args.updateId || ""))) throw new Error("invalid updateId");
+  if (tool === "bridge.update.stage") {
+    if (!args.relativePath || !args.contentBase64 || !/^[0-9a-fA-F]{64}$/.test(String(args.sha256 || ""))) throw new Error("invalid staging request");
+  } else {
+    if (args.productId !== "AUTSYS_PC_BRIDGE") throw new Error("invalid productId");
+    if (!Array.isArray(args.files) || args.files.length < 1 || args.files.length > 100) throw new Error("invalid update manifest");
+    if (!["NORMAL","FORCE_ROLLBACK_TEST"].includes(String(args.validationMode || "NORMAL"))) throw new Error("invalid validationMode");
+  }
+  return args;
+}
+
 function buildArguments(tool, form) {
   switch (tool) {
     case "health": return {};
@@ -168,7 +190,7 @@ function buildArguments(tool, form) {
     case "fs.write_text": return { path: String(form.get("path") || "").trim(), content: String(form.get("content") || "") };
     case "pg.roberta.query": return { sql: String(form.get("sql") || "").trim() };
     case "pg.roberta.write": return parseWriteArguments(form);
-    case "session.bootstrap": return { scope: String(form.get("scope") || "GENERAL").trim().toUpperCase(), projectName: String(form.get("projectName") || "").trim() };
+    case "bridge.update.stage":\n    case "bridge.update.apply": return parseUpdaterArguments(tool, form);\n    case "session.bootstrap": return { scope: String(form.get("scope") || "GENERAL").trim().toUpperCase(), projectName: String(form.get("projectName") || "").trim() };
     default: throw new Error("tool not supported");
   }
 }
@@ -178,7 +200,7 @@ async function callBridge(tool, args) {
     method: "POST",
     headers: { authorization: `Bearer ${CONTROL_TOKEN}`, "content-type": "application/json" },
     body: JSON.stringify({ requestId, tool, arguments: args }),
-    signal: AbortSignal.timeout(tool === "pg.roberta.write" ? 60000 : 30000)
+    signal: AbortSignal.timeout(tool === "bridge.update.apply" ? 300000 : tool === "pg.roberta.write" ? 60000 : 30000)
   });
   const text = await response.text();
   let body;
