@@ -4,10 +4,11 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 
-const VERSION = "0.1.0.3";
+const VERSION = "0.1.0.4";
 const PORT = Number(process.env.PORT || 10006);
 const BACKEND_PORT = Number(process.env.GATEWAY_INTERNAL_PORT || 10001);
 const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
+const RENDER_API_KEY = process.env.RENDER_API_KEY || "";
 if (!CONTROL_TOKEN) process.exit(1);
 
 const app = express();
@@ -85,6 +86,46 @@ async function queryRows(sql, bridgeId, label) {
   return unwrap(await callBridge("pg.roberta.query", { sql }, bridgeId), label);
 }
 
+async function optionalQueryRows(sql, bridgeId, label) {
+  try {
+    return { data: await queryRows(sql, bridgeId, label), warning: null };
+  } catch (e) {
+    return { data: { rows: [] }, warning: label + ": " + String(e?.message || e) };
+  }
+}
+
+async function callRender(path, options = {}) {
+  if (!RENDER_API_KEY) throw new Error("RENDER_API_KEY not configured");
+  const method = options.method || "GET";
+  const headers = {
+    authorization: "Bearer " + RENDER_API_KEY,
+    accept: "application/json"
+  };
+  let body;
+  if (options.body !== undefined) {
+    headers["content-type"] = "application/json";
+    body = JSON.stringify(options.body);
+  }
+  const response = await fetch("https://api.render.com/v1" + path, {
+    method,
+    headers,
+    body,
+    signal: AbortSignal.timeout(options.timeoutMs || 30000)
+  });
+  const text = await response.text();
+  let parsed;
+  try { parsed = text ? JSON.parse(text) : null; } catch { parsed = { raw: text }; }
+  if (!response.ok) {
+    const detail = parsed?.message || parsed?.error || parsed?.raw || ("HTTP " + response.status);
+    throw new Error("Render API " + response.status + ": " + detail);
+  }
+  return parsed;
+}
+
+function renderResult(data) {
+  return jsonResult({ ok: true, provider: "Render", result: data });
+}
+
 async function bootstrap(scope, projectName = "", bridgeId = "") {
   scope = String(scope || "").toUpperCase();
   if (!new Set(["GENERAL", "PROJECT"]).has(scope)) {
@@ -157,11 +198,14 @@ async function bootstrap(scope, projectName = "", bridgeId = "") {
     COALESCE(jsonb_agg(to_jsonb(c)),'[]'::jsonb) AS project_bootstrap_context
     FROM public.autsys_project_bootstrap_context c;`;
 
-  const [core, agent, context] = await Promise.all([
-    queryRows(coreSql, bridgeId, "bootstrap core"),
-    queryRows(agentSql, bridgeId, "bootstrap agent capabilities"),
-    queryRows(contextSql, bridgeId, "bootstrap project context")
+  const core = await queryRows(coreSql, bridgeId, "bootstrap core");
+  const [agentOptional, contextOptional] = await Promise.all([
+    optionalQueryRows(agentSql, bridgeId, "bootstrap agent capabilities"),
+    optionalQueryRows(contextSql, bridgeId, "bootstrap project context")
   ]);
+  const agent = agentOptional.data;
+  const context = contextOptional.data;
+  const warnings = [agentOptional.warning, contextOptional.warning].filter(Boolean);
 
   const row = Array.isArray(core.rows) && core.rows.length ? core.rows[0] : {};
   const agentRow = Array.isArray(agent.rows) && agent.rows.length ? agent.rows[0] : {};
@@ -205,6 +249,7 @@ async function bootstrap(scope, projectName = "", bridgeId = "") {
     agentCapabilities: Array.isArray(agentRow.agent_capabilities) ? agentRow.agent_capabilities : [],
     projectBootstrapContextCount: Number(contextRow.project_bootstrap_context_count || 0),
     projectBootstrapContext: Array.isArray(contextRow.project_bootstrap_context) ? contextRow.project_bootstrap_context : [],
+    warnings,
     database: core.database || agent.database || context.database || "roberta"
   };
 }
@@ -336,6 +381,126 @@ function buildMcp() {
   }, async ({ request, bridgeId }) =>
     result(await callBridge("bridge.update.apply", request, bridgeId || "")));
 
+
+  mcp.registerTool("render_list_services", {
+    title: "Elenca servizi Render",
+    description: "Elenca i servizi Render accessibili con la credenziale AUTSYS configurata sul gateway.",
+    inputSchema: z.object({
+      name: z.string().optional(),
+      limit: z.number().int().min(1).max(100).default(20)
+    }),
+    annotations: ro
+  }, async ({ name, limit }) => {
+    try {
+      const q = new URLSearchParams();
+      q.set("limit", String(limit));
+      if (name) q.append("name", name);
+      return renderResult(await callRender("/services?" + q.toString()));
+    } catch (e) {
+      return jsonResult({ ok: false, provider: "Render", error: String(e?.message || e) }, true);
+    }
+  });
+
+  mcp.registerTool("render_get_service", {
+    title: "Leggi servizio Render",
+    description: "Legge configurazione e stato di un servizio Render tramite serviceId.",
+    inputSchema: z.object({ serviceId: z.string().min(1) }),
+    annotations: ro
+  }, async ({ serviceId }) => {
+    try {
+      return renderResult(await callRender("/services/" + encodeURIComponent(serviceId)));
+    } catch (e) {
+      return jsonResult({ ok: false, provider: "Render", error: String(e?.message || e) }, true);
+    }
+  });
+
+  mcp.registerTool("render_list_deploys", {
+    title: "Elenca deploy Render",
+    description: "Elenca i deploy di un servizio Render.",
+    inputSchema: z.object({
+      serviceId: z.string().min(1),
+      limit: z.number().int().min(1).max(100).default(20)
+    }),
+    annotations: ro
+  }, async ({ serviceId, limit }) => {
+    try {
+      const q = new URLSearchParams({ limit: String(limit) });
+      return renderResult(await callRender("/services/" + encodeURIComponent(serviceId) + "/deploys?" + q.toString()));
+    } catch (e) {
+      return jsonResult({ ok: false, provider: "Render", error: String(e?.message || e) }, true);
+    }
+  });
+
+  mcp.registerTool("render_get_deploy", {
+    title: "Leggi deploy Render",
+    description: "Legge lo stato reale di uno specifico deploy Render.",
+    inputSchema: z.object({
+      serviceId: z.string().min(1),
+      deployId: z.string().min(1)
+    }),
+    annotations: ro
+  }, async ({ serviceId, deployId }) => {
+    try {
+      return renderResult(await callRender("/services/" + encodeURIComponent(serviceId) + "/deploys/" + encodeURIComponent(deployId)));
+    } catch (e) {
+      return jsonResult({ ok: false, provider: "Render", error: String(e?.message || e) }, true);
+    }
+  });
+
+  mcp.registerTool("render_trigger_deploy", {
+    title: "Avvia deploy Render",
+    description: "Avvia un deploy governato di un servizio Render. Può usare l'ultimo commit o un commitId esplicito.",
+    inputSchema: z.object({
+      serviceId: z.string().min(1),
+      clearCache: z.boolean().default(false),
+      commitId: z.string().optional()
+    }),
+    annotations: de
+  }, async ({ serviceId, clearCache, commitId }) => {
+    try {
+      const body = { clearCache: clearCache ? "clear" : "do_not_clear" };
+      if (commitId) body.commitId = commitId;
+      return renderResult(await callRender("/services/" + encodeURIComponent(serviceId) + "/deploys", {
+        method: "POST",
+        body,
+        timeoutMs: 60000
+      }));
+    } catch (e) {
+      return jsonResult({ ok: false, provider: "Render", error: String(e?.message || e) }, true);
+    }
+  });
+
+  mcp.registerTool("render_logs", {
+    title: "Leggi log Render",
+    description: "Legge i log Render per uno o più resourceId nello stesso workspace. Usa ownerId del workspace Render.",
+    inputSchema: z.object({
+      ownerId: z.string().min(1),
+      resourceIds: z.array(z.string().min(1)).min(1).max(20),
+      startTime: z.string().optional(),
+      endTime: z.string().optional(),
+      direction: z.enum(["backward", "forward"]).default("backward"),
+      limit: z.number().int().min(1).max(100).default(50),
+      text: z.array(z.string()).optional(),
+      type: z.array(z.string()).optional()
+    }),
+    annotations: ro
+  }, async ({ ownerId, resourceIds, startTime, endTime, direction, limit, text, type }) => {
+    try {
+      const q = new URLSearchParams();
+      q.set("ownerId", ownerId);
+      q.set("direction", direction);
+      q.set("limit", String(limit));
+      if (startTime) q.set("startTime", startTime);
+      if (endTime) q.set("endTime", endTime);
+      for (const id of resourceIds) q.append("resource", id);
+      for (const t of (text || [])) q.append("text", t);
+      for (const t of (type || [])) q.append("type", t);
+      return renderResult(await callRender("/logs?" + q.toString(), { timeoutMs: 60000 }));
+    } catch (e) {
+      return jsonResult({ ok: false, provider: "Render", error: String(e?.message || e) }, true);
+    }
+  });
+
   return mcp;
 }
 
@@ -373,6 +538,7 @@ app.get("/health", (_req, res) =>
     product: "AUTSYS MCP FULL FRONT",
     version: VERSION,
     bootstrapVersion: "3",
+    renderTools: true,
     utc: new Date().toISOString()
   }));
 
