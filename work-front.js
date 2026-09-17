@@ -189,8 +189,10 @@ function parseProjectRegisterArguments(form) {
   let args;
   try { args = JSON.parse(text); } catch { throw new Error("project.register JSON invalid"); }
   if (!args || typeof args !== "object" || Array.isArray(args)) throw new Error("project.register JSON must be an object");
-  const allowed = new Set(["projectName","projectKey","entityKind","rootPath","repositoryUrl","repositoryBranch","description","isAuthoritative"]);
+  const allowed = new Set(["projectName","displayName","projectKey","entityKind","rootPath","repositoryUrl","repositoryBranch","description","isAuthoritative"]);
   for (const key of Object.keys(args)) if (!allowed.has(key)) throw new Error(`project.register field not allowed: ${key}`);
+  if (!args.displayName && args.projectName) args.displayName = args.projectName;
+  delete args.projectName;
   return args;
 }
 
