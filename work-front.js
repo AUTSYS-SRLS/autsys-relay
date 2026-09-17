@@ -190,7 +190,9 @@ function buildArguments(tool, form) {
     case "fs.write_text": return { path: String(form.get("path") || "").trim(), content: String(form.get("content") || "") };
     case "pg.roberta.query": return { sql: String(form.get("sql") || "").trim() };
     case "pg.roberta.write": return parseWriteArguments(form);
-    case "bridge.update.stage":\n    case "bridge.update.apply": return parseUpdaterArguments(tool, form);\n    case "session.bootstrap": return { scope: String(form.get("scope") || "GENERAL").trim().toUpperCase(), projectName: String(form.get("projectName") || "").trim() };
+    case "bridge.update.stage":
+    case "bridge.update.apply": return parseUpdaterArguments(tool, form);
+    case "session.bootstrap": return { scope: String(form.get("scope") || "GENERAL").trim().toUpperCase(), projectName: String(form.get("projectName") || "").trim() };
     default: throw new Error("tool not supported");
   }
 }
