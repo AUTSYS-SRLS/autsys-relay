@@ -18,7 +18,9 @@ const ALLOWED_TOOLS = new Set([
   "pg.roberta.write",
   "pg.roberta.migrate",
   "session.bootstrap",
-  "project.register"
+  "project.register",
+  "bridge.update.stage",
+  "bridge.update.apply"
 ]);
 const processed = new Set();
 
@@ -426,9 +428,6 @@ WHERE ec.is_enabled=true;`.trim();
 async function executeInternal(command) {
   if (command.tool === "session.bootstrap") {
     return await executeSessionBootstrap(command);
-  }
-  if (command.tool === "project.register") {
-    return await executeProjectRegister(command);
   }
   return await callBridge(command, command.tool, command.arguments || {});
 }
