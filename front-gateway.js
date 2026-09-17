@@ -1,5 +1,6 @@
 import http from "node:http";
-import net from "node:net";\nimport crypto from "node:crypto";
+import net from "node:net";
+import crypto from "node:crypto";
 
 const PORT = Number(process.env.PORT || 10000);
 const INTERNAL_PORT = Number(process.env.GATEWAY_INTERNAL_PORT || 10001);
