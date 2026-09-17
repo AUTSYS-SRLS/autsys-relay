@@ -42,8 +42,10 @@ const publicPort = String(process.env.PORT || 10000);
 const internalPort = String(process.env.GATEWAY_INTERNAL_PORT || 10001);
 const legacyFrontPort = String(process.env.LEGACY_FRONT_PORT || 10002);
 const workFrontPort = String(process.env.WORK_FRONT_PORT || 10003);
+const workDbFrontPort = String(process.env.WORK_DB_FRONT_PORT || 10004);
 
 start("gateway-backend", "server.js", { PORT: internalPort });
 start("front-gateway", "front-gateway.js", { PORT: legacyFrontPort, GATEWAY_INTERNAL_PORT: internalPort });
 start("work-front", "work-front.js", { PORT: workFrontPort, LEGACY_FRONT_PORT: legacyFrontPort, GATEWAY_INTERNAL_PORT: internalPort });
-start("work-db-front", "work-db-front.js", { PORT: publicPort, WORK_FRONT_PORT: workFrontPort, GATEWAY_INTERNAL_PORT: internalPort });
+start("work-db-front", "work-db-front.js", { PORT: workDbFrontPort, WORK_FRONT_PORT: workFrontPort, GATEWAY_INTERNAL_PORT: internalPort });
+start("work-bootstrap-front", "work-bootstrap-front.js", { PORT: publicPort, WORK_DB_FRONT_PORT: workDbFrontPort, GATEWAY_INTERNAL_PORT: internalPort });
