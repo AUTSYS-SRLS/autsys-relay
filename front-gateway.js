@@ -203,104 +203,6 @@ function projectRow(row = {}) {
   };
 }
 
-async function executeProjectRegister(command) {
-  const args = parseProjectRegisterArgs(command.arguments || {});
-  const lookupSql = `
-SELECT public_id::text,project_key,display_name,entity_kind,lifecycle_status,root_path,repository_url,repository_branch,description,is_authoritative
-FROM public.autsys_project_registry
-WHERE project_key=${sqlLiteral(args.projectKey)} OR lower(display_name)=lower(${sqlLiteral(args.projectName)})
-ORDER BY CASE WHEN project_key=${sqlLiteral(args.projectKey)} THEN 0 ELSE 1 END,id
-LIMIT 1;`.trim();
-
-  const beforeCall = await callBridge(command, "pg.roberta.query", { sql: lookupSql }, "project-register-precheck");
-  const beforeResult = requireBridgeResult(beforeCall, "precheck", "project.register");
-  if (Array.isArray(beforeResult.rows) && beforeResult.rows.length) {
-    return {
-      status: 200,
-      effectiveTool: "project.register",
-      body: {
-        ok: true,
-        operation: "project.register",
-        database: beforeResult.database,
-        created: false,
-        alreadyExisted: true,
-        project: projectRow(beforeResult.rows[0])
-      }
-    };
-  }
-
-  const migrationId = `AUTSYS_PROJECT_REGISTER_${args.projectKey}_${String(command.requestId).replaceAll("-", "")}`;
-  const registrationSql = `
-INSERT INTO public.autsys_project_registry
-(project_key,display_name,entity_kind,lifecycle_status,root_path,repository_url,repository_branch,description,is_authoritative,metadata_json)
-VALUES (
-  ${sqlLiteral(args.projectKey)},
-  ${sqlLiteral(args.projectName)},
-  ${sqlLiteral(args.entityKind)},
-  'active',
-  ${sqlNullable(args.rootPath)},
-  ${sqlNullable(args.repositoryUrl)},
-  ${sqlNullable(args.repositoryBranch)},
-  ${sqlNullable(args.description)},
-  ${args.isAuthoritative ? "true" : "false"},
-  jsonb_build_object(
-    'registered_by','chatgpt_session_bootstrap',
-    'registration_request_id',${sqlLiteral(command.requestId)}
-  )
-)
-ON CONFLICT (project_key) DO NOTHING;`.trim();
-
-  const migrationCall = await callBridge(command, "pg.roberta.migrate", {
-    migrationId,
-    sql: registrationSql,
-    description: `Direct project registration from ChatGPT session bootstrap: ${args.projectKey}`
-  }, "project-register-write");
-  const migrationResult = requireBridgeResult(migrationCall, "write", "project.register");
-
-  const verifyCall = await callBridge(command, "pg.roberta.query", { sql: lookupSql }, "project-register-verify");
-  const verifyResult = requireBridgeResult(verifyCall, "verify", "project.register");
-  if (!Array.isArray(verifyResult.rows) || !verifyResult.rows.length) {
-    throw new Error("project.register verify failed: project not found after write");
-  }
-
-  const verified = verifyResult.rows[0];
-  if (verified.project_key !== args.projectKey || verified.display_name !== args.projectName || verified.entity_kind !== args.entityKind) {
-    return {
-      status: 409,
-      effectiveTool: "project.register",
-      body: {
-        ok: false,
-        operation: "project.register",
-        error: "project key/name conflict after concurrent registration",
-        requested: {
-          projectKey: args.projectKey,
-          displayName: args.projectName,
-          entityKind: args.entityKind
-        },
-        existing: projectRow(verified)
-      }
-    };
-  }
-
-  return {
-    status: 200,
-    effectiveTool: "project.register",
-    body: {
-      ok: true,
-      operation: "project.register",
-      database: verifyResult.database,
-      created: true,
-      alreadyExisted: false,
-      project: projectRow(verified),
-      migration: {
-        migrationId,
-        applied: migrationResult.applied ?? true,
-        backupPath: migrationResult.backupPath || migrationResult.backup || null
-      }
-    }
-  };
-}
-
 async function executeSessionBootstrap(command) {
   const { scope, projectName, projectKey } = parseBootstrapArgs(command.arguments || {});
   const projectWhere = scope === "PROJECT"
@@ -431,6 +333,12 @@ WHERE ec.is_enabled=true;`.trim();
 async function executeInternal(command) {
   if (command.tool === "session.bootstrap") {
     return await executeSessionBootstrap(command);
+  }
+  if (command.tool === "project.register") {
+    const args = { ...(command.arguments || {}) };
+    if (!args.displayName && args.projectName) args.displayName = args.projectName;
+    delete args.projectName;
+    return await callBridge(command, "project.register", args);
   }
   return await callBridge(command, command.tool, command.arguments || {});
 }
