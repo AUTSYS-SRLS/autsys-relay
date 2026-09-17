@@ -1,5 +1,5 @@
 import http from "node:http";
-import net from "node:net";
+import net from "node:net";\nimport crypto from "node:crypto";
 
 const PORT = Number(process.env.PORT || 10000);
 const INTERNAL_PORT = Number(process.env.GATEWAY_INTERNAL_PORT || 10001);
@@ -385,6 +385,8 @@ WHERE ec.is_enabled=true;`.trim();
       operation: "session.bootstrap",
       source: "ROBERTA",
       database: summaryResult.database,
+      bootstrapVersion: "1",
+      completedUtc: new Date().toISOString(),
       scope,
       project: {
         requestedName: scope === "PROJECT" ? projectName : null,
