@@ -26,7 +26,7 @@ const ALLOWED_TOOLS = new Set([
   "bridge.update.stage",
   "bridge.update.apply"
 ]);
-const WRITE_TOOLS = new Set(["fs.write_text", "fs.delete", "pg.roberta.write", "bridge.update.stage", "bridge.update.apply"]);
+const WRITE_TOOLS = new Set(["fs.write_text", "fs.delete", "pg.roberta.write", "project.register", "bridge.update.stage", "bridge.update.apply"]);
 
 if (!CONTROL_TOKEN || !PANEL_ACCESS_KEY || !PANEL_SESSION_SECRET) {
   console.error("WORK FRONT disabled: missing CONTROL_TOKEN, PANEL_ACCESS_KEY or PANEL_SESSION_SECRET");
@@ -114,7 +114,7 @@ function panelPage(result = null, resultTitle = "Risultato") {
 <div class="card"><h2>Elimina file</h2><form method="post" action="/work/run"><input type="hidden" name="tool" value="fs.delete"><label>Percorso file</label><input name="path" required><label><input style="width:auto" type="checkbox" name="confirm" value="YES" required> Confermo l'eliminazione</label><button class="danger">ELIMINA</button></form></div>
 <div class="card"><h2>Query ROBERTA</h2><form method="post" action="/work/run"><input type="hidden" name="tool" value="pg.roberta.query"><label>SQL sola lettura</label><textarea name="sql" required></textarea><button>ESEGUI QUERY</button></form></div>
 <div class="card"><h2>Scrittura dati ROBERTA</h2><form method="post" action="/work/run"><input type="hidden" name="tool" value="pg.roberta.write"><label>Richiesta JSON strutturata</label><textarea name="writeJson" required></textarea><label><input style="width:auto" type="checkbox" name="confirm" value="YES" required> Confermo la scrittura dati</label><button class="danger">ESEGUI SCRITTURA</button></form></div>
-<div class="card"><h2>Staging aggiornamento Bridge</h2><form method="post" action="/work/run"><input type="hidden" name="tool" value="bridge.update.stage"><label>Richiesta JSON strutturata</label><textarea name="updateJsonStage" required></textarea><label><input style="width:auto" type="checkbox" name="confirm" value="YES" required> Confermo lo staging</label><button class="danger">STAGE UPDATE</button></form></div>\n<div class="card"><h2>Applica aggiornamento Bridge</h2><form method="post" action="/work/run"><input type="hidden" name="tool" value="bridge.update.apply"><label>Richiesta JSON strutturata</label><textarea name="updateJsonApply" required></textarea><label><input style="width:auto" type="checkbox" name="confirm" value="YES" required> Confermo aggiornamento governato</label><button class="danger">APPLICA UPDATE</button></form></div>\n<div class="card"><h2>Session bootstrap</h2><form method="post" action="/work/run"><input type="hidden" name="tool" value="session.bootstrap"><label>Ambito</label><select name="scope"><option>GENERAL</option><option>PROJECT</option></select><label>Nome progetto (solo PROJECT)</label><input name="projectName"><button>BOOTSTRAP</button></form></div>
+<div class="card"><h2>Staging aggiornamento Bridge</h2><form method="post" action="/work/run"><input type="hidden" name="tool" value="bridge.update.stage"><label>Richiesta JSON strutturata</label><textarea name="updateJsonStage" required></textarea><label><input style="width:auto" type="checkbox" name="confirm" value="YES" required> Confermo lo staging</label><button class="danger">STAGE UPDATE</button></form></div>\n<div class="card"><h2>Applica aggiornamento Bridge</h2><form method="post" action="/work/run"><input type="hidden" name="tool" value="bridge.update.apply"><label>Richiesta JSON strutturata</label><textarea name="updateJsonApply" required></textarea><label><input style="width:auto" type="checkbox" name="confirm" value="YES" required> Confermo aggiornamento governato</label><button class="danger">APPLICA UPDATE</button></form></div>\n<div class="card"><h2>Registra progetto</h2><form method="post" action="/work/run"><input type="hidden" name="tool" value="project.register"><label>Richiesta JSON strutturata</label><textarea name="registerJson" required></textarea><label><input style="width:auto" type="checkbox" name="confirm" value="YES" required> Confermo la registrazione</label><button class="danger">REGISTRA PROGETTO</button></form></div>\n<div class="card"><h2>Session bootstrap</h2><form method="post" action="/work/run"><input type="hidden" name="tool" value="session.bootstrap"><label>Ambito</label><select name="scope"><option>GENERAL</option><option>PROJECT</option></select><label>Nome progetto (solo PROJECT)</label><input name="projectName"><button>BOOTSTRAP</button></form></div>
 </div>${output}`);
 }
 async function readForm(req) {
@@ -183,6 +183,17 @@ function parseUpdaterArguments(tool, form) {
   return args;
 }
 
+function parseProjectRegisterArguments(form) {
+  const text = String(form.get("registerJson") || "").trim();
+  if (!text || text.length > 16 * 1024) throw new Error("project.register JSON missing or too large");
+  let args;
+  try { args = JSON.parse(text); } catch { throw new Error("project.register JSON invalid"); }
+  if (!args || typeof args !== "object" || Array.isArray(args)) throw new Error("project.register JSON must be an object");
+  const allowed = new Set(["projectName","projectKey","entityKind","rootPath","repositoryUrl","repositoryBranch","description","isAuthoritative"]);
+  for (const key of Object.keys(args)) if (!allowed.has(key)) throw new Error(`project.register field not allowed: ${key}`);
+  return args;
+}
+
 function buildArguments(tool, form) {
   switch (tool) {
     case "health": return {};
@@ -195,6 +206,7 @@ function buildArguments(tool, form) {
     case "pg.roberta.write": return parseWriteArguments(form);
     case "bridge.update.stage":
     case "bridge.update.apply": return parseUpdaterArguments(tool, form);
+    case "project.register": return parseProjectRegisterArguments(form);
     case "session.bootstrap": return { scope: String(form.get("scope") || "GENERAL").trim().toUpperCase(), projectName: String(form.get("projectName") || "").trim() };
     default: throw new Error("tool not supported");
   }
