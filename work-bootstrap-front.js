@@ -3,7 +3,8 @@ import net from "node:net";
 import crypto from "node:crypto";
 
 const PORT = Number(process.env.PORT || 10000);
-const WORK_DB_FRONT_PORT = Number(process.env.WORK_DB_FRONT_PORT || 10004);\nconst LEGACY_FRONT_PORT = Number(process.env.LEGACY_FRONT_PORT || 10002);
+const WORK_DB_FRONT_PORT = Number(process.env.WORK_DB_FRONT_PORT || 10004);
+const LEGACY_FRONT_PORT = Number(process.env.LEGACY_FRONT_PORT || 10002);
 const GATEWAY_INTERNAL_PORT = Number(process.env.GATEWAY_INTERNAL_PORT || 10001);
 const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
 const PANEL_SESSION_SECRET = process.env.PANEL_SESSION_SECRET || "";
