@@ -3,7 +3,7 @@ import net from "node:net";
 import crypto from "node:crypto";
 
 const PORT = Number(process.env.PORT || 10000);
-const WORK_DB_FRONT_PORT = Number(process.env.WORK_DB_FRONT_PORT || 10004);
+const WORK_DB_FRONT_PORT = Number(process.env.WORK_DB_FRONT_PORT || 10004);\nconst LEGACY_FRONT_PORT = Number(process.env.LEGACY_FRONT_PORT || 10002);
 const GATEWAY_INTERNAL_PORT = Number(process.env.GATEWAY_INTERNAL_PORT || 10001);
 const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
 const PANEL_SESSION_SECRET = process.env.PANEL_SESSION_SECRET || "";
@@ -152,7 +152,7 @@ async function callBridge(tool, args, suffix) {
   return br.result;
 }
 
-async function bootstrap(target) {
+async function legacyBootstrap(target) {
   const scope = target.scope;
   const projectName = target.projectName;
   const projectKey = normalizeProjectKey(projectName);
@@ -311,6 +311,21 @@ function proxy(req, res, options = {}) {
     else res.destroy();
   });
   req.pipe(upstream);
+}
+
+async function bootstrap(target) {
+  const requestId = crypto.randomUUID();
+  const response = await fetch(`http://127.0.0.1:${LEGACY_FRONT_PORT}/internal/execute`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${CONTROL_TOKEN}`, "content-type": "application/json" },
+    body: JSON.stringify({ requestId, tool: "session.bootstrap", arguments: { scope: target.scope, projectName: target.projectName } }),
+    signal: AbortSignal.timeout(60000)
+  });
+  const text = await response.text();
+  let body;
+  try { body = JSON.parse(text); } catch { throw new Error(text || `HTTP ${response.status}`); }
+  if (!response.ok || !body?.ok) throw new Error(body?.error || `HTTP ${response.status}`);
+  return body;
 }
 
 const server = http.createServer(async (req, res) => {
