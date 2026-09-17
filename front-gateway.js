@@ -489,6 +489,17 @@ async function handleChatPull(req, res, url) {
   }
 }
 
+async function readInternalJson(req) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > 1024 * 1024) throw new Error("internal payload too large");
+    chunks.push(chunk);
+  }
+  return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+}
+
 function proxyHttp(req, res) {
   const headers = { ...req.headers, host: `127.0.0.1:${INTERNAL_PORT}` };
   const proxy = http.request({
@@ -508,13 +519,25 @@ function proxyHttp(req, res) {
   req.pipe(proxy);
 }
 
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   let url;
   try { url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`); }
   catch { return json(res, 400, { ok: false, error: "bad request" }); }
 
   if (req.method === "GET" && url.pathname === "/chat-control/pull") {
     return handleChatPull(req, res, url);
+  }
+  if (req.method === "POST" && url.pathname === "/internal/execute") {
+    if (req.headers.authorization !== `Bearer ${CONTROL_TOKEN}`) return json(res, 401, { ok: false, error: "unauthorized" });
+    try {
+      const command = await readInternalJson(req);
+      const tool = String(command.tool || "").trim();
+      if (!ALLOWED_TOOLS.has(tool)) return json(res, 403, { ok: false, error: `tool not allowed: ${tool}` });
+      const result = await executeInternal({ ...command, tool, requestId: command.requestId || crypto.randomUUID() });
+      return json(res, result.status, result.body);
+    } catch (err) {
+      return json(res, 400, { ok: false, error: String(err?.message || err) });
+    }
   }
   proxyHttp(req, res);
 });
