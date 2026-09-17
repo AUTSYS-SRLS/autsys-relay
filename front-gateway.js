@@ -540,5 +540,6 @@ server.listen(PORT, "0.0.0.0", () => {
   console.log(`AUTSYS PC BRIDGE FRONT GATEWAY listening on ${PORT}; backend=${INTERNAL_PORT}`);
   console.log("HOT CHAT CONTROL ready at /chat-control/pull");
   console.log("SESSION BOOTSTRAP orchestrator ready as session.bootstrap");
-  console.log("DIRECT LOCAL PROJECT REGISTRATION forwarded as project.register");\n  console.log("PRIVILEGED BRIDGE UPDATER forwarded as bridge.update.stage/apply");
+  console.log("DIRECT LOCAL PROJECT REGISTRATION forwarded as project.register");
+  console.log("PRIVILEGED BRIDGE UPDATER forwarded as bridge.update.stage/apply");
 });
