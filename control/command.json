@@ -1,0 +1,14 @@
+{
+  "protocol": "chat-plain-v1",
+  "requestId": "f3419a20-0aad-4dc5-a013-202609170751",
+  "expiresAt": "2026-09-17T08:00:19.844Z",
+  "bridgeId": "AUTSYS-PC-BRIDGE-DEV",
+  "tool": "project.register",
+  "arguments": {
+    "projectName": "AUTSYS PC BRIDGE BOOTSTRAP TEST 20260917",
+    "projectKey": "AUTSYS_PC_BRIDGE_BOOTSTRAP_TEST_20260917",
+    "entityKind": "SOFTWARE_PROJECT",
+    "description": "Progetto temporaneo di collaudo bootstrap diretto 2026-09-17",
+    "isAuthoritative": true
+  }
+}
