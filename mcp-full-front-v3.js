@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 
-const VERSION = "0.1.0.5";
+const VERSION = "0.1.0.6";
 const PORT = Number(process.env.PORT || 10006);
 const BACKEND_PORT = Number(process.env.GATEWAY_INTERNAL_PORT || 10001);
 const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
@@ -188,6 +188,34 @@ async function bootstrap(scope, projectName = "", bridgeId = "") {
     ) ORDER BY ec.provider_key,ec.capability_key)
     FROM public.autsys_external_capabilities_registry ec WHERE ec.is_enabled=true),'[]'::jsonb) AS external_capabilities;`;
 
+  const agentIdentitySql = `SELECT
+    id,public_id,agent_key,display_name,agent_role,description,lifecycle_status,
+    bootstrap_enabled,instructions_version,metadata_json,created_at,updated_at
+    FROM public.autsys_agent_registry
+    WHERE bootstrap_enabled=true AND lifecycle_status='active'
+    ORDER BY id
+    LIMIT 1;`;
+
+  const agentFoundationSql = `SELECT
+    f.id,f.public_id,f.agent_public_id,f.foundation_key,f.foundation_version,
+    f.foundation_text_human,f.foundation_payload_json,f.source_of_truth,
+    f.is_active,f.created_at,f.updated_at
+    FROM public.autsys_agent_foundation f
+    JOIN public.autsys_agent_registry a ON a.public_id=f.agent_public_id
+    WHERE a.bootstrap_enabled=true AND a.lifecycle_status='active' AND f.is_active=true
+    ORDER BY f.id;`;
+
+  const agentRulesSql = `SELECT
+    r.id,r.public_id,r.agent_public_id,r.rule_key,r.rule_version,r.rule_text_human,
+    r.rule_scope,r.priority_level,r.lifecycle_status,r.is_active,
+    r.requires_user_confirmation,r.user_confirmed,r.source_type,r.source_reference,
+    r.supersedes_rule_public_id,r.metadata_json,r.created_at,r.updated_at
+    FROM public.autsys_agent_rules r
+    JOIN public.autsys_agent_registry a ON a.public_id=r.agent_public_id
+    WHERE a.bootstrap_enabled=true AND a.lifecycle_status='active'
+      AND r.is_active=true AND r.lifecycle_status='active' AND r.user_confirmed=true
+    ORDER BY r.priority_level ASC,r.rule_key ASC,r.rule_version DESC,r.id ASC;`;
+
   const agentSql = `SELECT
     count(*)::int AS agent_capability_count,
     COALESCE(jsonb_agg(to_jsonb(a)),'[]'::jsonb) AS agent_capabilities
@@ -199,15 +227,30 @@ async function bootstrap(scope, projectName = "", bridgeId = "") {
     FROM public.autsys_project_bootstrap_context c;`;
 
   const core = await queryRows(coreSql, bridgeId, "bootstrap core");
-  const [agentOptional, contextOptional] = await Promise.all([
+  const [identityOptional, foundationOptional, rulesOptional, agentOptional, contextOptional] = await Promise.all([
+    optionalQueryRows(agentIdentitySql, bridgeId, "bootstrap agent identity"),
+    optionalQueryRows(agentFoundationSql, bridgeId, "bootstrap agent foundation"),
+    optionalQueryRows(agentRulesSql, bridgeId, "bootstrap agent rules"),
     optionalQueryRows(agentSql, bridgeId, "bootstrap agent capabilities"),
     optionalQueryRows(contextSql, bridgeId, "bootstrap project context")
   ]);
+  const identity = identityOptional.data;
+  const foundation = foundationOptional.data;
+  const rules = rulesOptional.data;
   const agent = agentOptional.data;
   const context = contextOptional.data;
-  const warnings = [agentOptional.warning, contextOptional.warning].filter(Boolean);
+  const warnings = [
+    identityOptional.warning,
+    foundationOptional.warning,
+    rulesOptional.warning,
+    agentOptional.warning,
+    contextOptional.warning
+  ].filter(Boolean);
 
   const row = Array.isArray(core.rows) && core.rows.length ? core.rows[0] : {};
+  const identityRow = Array.isArray(identity.rows) && identity.rows.length ? identity.rows[0] : null;
+  const foundationRows = Array.isArray(foundation.rows) ? foundation.rows : [];
+  const ruleRows = Array.isArray(rules.rows) ? rules.rows : [];
   const agentRow = Array.isArray(agent.rows) && agent.rows.length ? agent.rows[0] : {};
   const contextRow = Array.isArray(context.rows) && context.rows.length ? context.rows[0] : {};
   const found = Boolean(row.project_found);
@@ -216,7 +259,7 @@ async function bootstrap(scope, projectName = "", bridgeId = "") {
     ok: true,
     operation: "session.bootstrap",
     source: "ROBERTA",
-    bootstrapVersion: "3",
+    bootstrapVersion: "4",
     completedUtc: new Date().toISOString(),
     scope,
     project: {
@@ -245,6 +288,11 @@ async function bootstrap(scope, projectName = "", bridgeId = "") {
     externalCapabilityCount: Number(row.external_capability_count || 0),
     pluginCapabilities: row.plugin_capabilities || [],
     externalCapabilities: row.external_capabilities || [],
+    agent: identityRow,
+    agentFoundationCount: foundationRows.length,
+    agentFoundation: foundationRows,
+    agentRuleCount: ruleRows.length,
+    agentRules: ruleRows,
     agentCapabilityCount: Number(agentRow.agent_capability_count || 0),
     agentCapabilities: Array.isArray(agentRow.agent_capabilities) ? agentRow.agent_capabilities : [],
     projectBootstrapContextCount: Number(contextRow.project_bootstrap_context_count || 0),
@@ -259,7 +307,12 @@ const wr = { readOnlyHint: false, destructiveHint: false, idempotentHint: false,
 const de = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false };
 
 function buildMcp() {
-  const mcp = new McpServer({ name: "AUTSYS PC BRIDGE", version: VERSION });
+  const mcp = new McpServer(
+    { name: "AUTSYS PC BRIDGE", version: VERSION },
+    {
+      instructions: "At the beginning of each new ChatGPT conversation/session in which AUTSYS PC BRIDGE is available, call session_bootstrap with scope GENERAL before relying on persistent AUTSYS agent context. Treat the returned agent identity, active Agent Foundation, confirmed active Agent Rules, verified capabilities, and project context as ROBERTA-sourced persistent context. Do not confuse the agent identity with ROBERTA. If the bootstrap reports warnings or fails, state that persistent context is incomplete rather than inventing it."
+    }
+  );
 
   mcp.registerTool("pc_health", {
     title: "Stato PC Bridge",
@@ -367,7 +420,7 @@ function buildMcp() {
 
   mcp.registerTool("session_bootstrap", {
     title: "Bootstrap AUTSYS",
-    description: "Bootstrap ROBERTA v3: catalogo progetti, progetto corrente, capacità operative e contesto informativo dell'agente.",
+    description: "Bootstrap ROBERTA v4: identità agente, Foundation Agente, Regole Agente attive, capacità operative, catalogo progetti e contesto progetto.",
     inputSchema: z.object({
       scope: z.enum(["GENERAL", "PROJECT"]),
       projectName: z.string().optional(),
@@ -572,10 +625,10 @@ app.get("/health", (_req, res) =>
     ok: true,
     product: "AUTSYS MCP FULL FRONT",
     version: VERSION,
-    bootstrapVersion: "3",
+    bootstrapVersion: "4",
     renderTools: true,
     utc: new Date().toISOString()
   }));
 
 app.listen(PORT, "127.0.0.1", () =>
-  console.log(`AUTSYS MCP FULL FRONT ${VERSION} listening on ${PORT}; backend=${BACKEND_PORT}; bootstrap=v3`));
+  console.log(`AUTSYS MCP FULL FRONT ${VERSION} listening on ${PORT}; backend=${BACKEND_PORT}; bootstrap=v4`));
