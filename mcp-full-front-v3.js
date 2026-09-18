@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 
-const VERSION = "0.1.0.4";
+const VERSION = "0.1.0.5";
 const PORT = Number(process.env.PORT || 10006);
 const BACKEND_PORT = Number(process.env.GATEWAY_INTERNAL_PORT || 10001);
 const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
@@ -302,6 +302,41 @@ function buildMcp() {
     inputSchema: z.object({ path: z.string().min(1), bridgeId: z.string().optional() }),
     annotations: de
   }, async ({ path, bridgeId }) => result(await callBridge("fs.delete", { path }, bridgeId || "")));
+
+
+  mcp.registerTool("pc_process_start", {
+    title: "Avvia processo AUTSYS",
+    description: "Avvia in modo governato uno script Python, CMD/BAT o PowerShell gia presente su D:. Non accetta command-line shell libera.",
+    inputSchema: z.object({
+      kind: z.enum(["python", "cmd", "powershell"]),
+      target: z.string().min(1),
+      args: z.array(z.string()).optional(),
+      workingDirectory: z.string().optional(),
+      bridgeId: z.string().optional()
+    }),
+    annotations: wr
+  }, async ({ kind, target, args, workingDirectory, bridgeId }) =>
+    result(await callBridge("process.start", { kind, target, args: args || [], workingDirectory }, bridgeId || "")));
+
+  mcp.registerTool("pc_process_status", {
+    title: "Stato processo AUTSYS",
+    description: "Legge PID, stato, exit code, stdout e stderr di un processo avviato dal Bridge.",
+    inputSchema: z.object({ processId: z.string().min(1), bridgeId: z.string().optional() }),
+    annotations: ro
+  }, async ({ processId, bridgeId }) =>
+    result(await callBridge("process.status", { processId }, bridgeId || "")));
+
+  mcp.registerTool("pc_process_stop", {
+    title: "Arresta processo AUTSYS",
+    description: "Arresta un processo avviato e tracciato dal Bridge.",
+    inputSchema: z.object({
+      processId: z.string().min(1),
+      entireProcessTree: z.boolean().default(true),
+      bridgeId: z.string().optional()
+    }),
+    annotations: wr
+  }, async ({ processId, entireProcessTree, bridgeId }) =>
+    result(await callBridge("process.stop", { processId, entireProcessTree }, bridgeId || "")));
 
   mcp.registerTool("roberta_query", {
     title: "Leggi ROBERTA",
