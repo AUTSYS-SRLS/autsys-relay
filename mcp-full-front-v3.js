@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 
-const VERSION = "0.1.0.6";
+const VERSION = "0.1.0.7";
 const PORT = Number(process.env.PORT || 10006);
 const BACKEND_PORT = Number(process.env.GATEWAY_INTERNAL_PORT || 10001);
 const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
@@ -226,25 +226,63 @@ async function bootstrap(scope, projectName = "", bridgeId = "") {
     COALESCE(jsonb_agg(to_jsonb(c)),'[]'::jsonb) AS project_bootstrap_context
     FROM public.autsys_project_bootstrap_context c;`;
 
+  const databaseCatalogSql = `SELECT
+    database_key,display_name,owner_type,owner_public_id,owner_name,
+    product_public_id,product_name,database_type,engine,version,locator,
+    database_name,schema_name,access_mode,role,is_authoritative,
+    lifecycle_status,connection_via,notes,metadata_json,updated_at
+    FROM public.autsys_database_catalog
+    ORDER BY is_authoritative DESC,lifecycle_status,display_name,id;`;
+
+  const databaseSourcesSql = `SELECT
+    p.project_key,p.display_name AS project_name,
+    d.data_source_key,d.source_type,d.locator,d.database_name,d.schema_name,
+    d.access_mode,d.connection_via,d.is_authoritative,d.lifecycle_status,d.metadata_json
+    FROM public.autsys_project_data_sources d
+    JOIN public.autsys_project_registry p ON p.public_id=d.project_public_id
+    WHERE upper(COALESCE(d.source_type,'')) IN ('DATABASE','POSTGRESQL','SQLITE','FILE_DATABASE')
+       OR d.database_name IS NOT NULL
+    ORDER BY p.display_name,d.data_source_key,d.id;`;
+
+  const openItemSql = `SELECT
+    oi.id,oi.project_public_id,p.project_key,p.display_name AS project_name,
+    oi.item_key,oi.title,oi.description,oi.status,oi.priority,oi.updated_at
+    FROM public.autsys_project_open_items oi
+    LEFT JOIN public.autsys_project_registry p ON p.public_id=oi.project_public_id
+    WHERE lower(COALESCE(oi.status,'')) NOT IN ('completed','closed','done','cancelled','canceled')
+      ${scope === "PROJECT" ? `AND (lower(p.display_name)=lower(${sqlLiteral(projectName)}) OR p.project_key=${sqlLiteral(key)})` : ""}
+    ORDER BY
+      CASE lower(COALESCE(oi.priority,'')) WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END,
+      oi.updated_at DESC NULLS LAST,oi.id;`;
+
   const core = await queryRows(coreSql, bridgeId, "bootstrap core");
-  const [identityOptional, foundationOptional, rulesOptional, agentOptional, contextOptional] = await Promise.all([
+  const [identityOptional, foundationOptional, rulesOptional, agentOptional, contextOptional, databaseCatalogOptional, databaseSourcesOptional, openItemsOptional] = await Promise.all([
     optionalQueryRows(agentIdentitySql, bridgeId, "bootstrap agent identity"),
     optionalQueryRows(agentFoundationSql, bridgeId, "bootstrap agent foundation"),
     optionalQueryRows(agentRulesSql, bridgeId, "bootstrap agent rules"),
     optionalQueryRows(agentSql, bridgeId, "bootstrap agent capabilities"),
-    optionalQueryRows(contextSql, bridgeId, "bootstrap project context")
+    optionalQueryRows(contextSql, bridgeId, "bootstrap project context"),
+    optionalQueryRows(databaseCatalogSql, bridgeId, "bootstrap database catalog"),
+    optionalQueryRows(databaseSourcesSql, bridgeId, "bootstrap project database sources"),
+    optionalQueryRows(openItemSql, bridgeId, "bootstrap open items")
   ]);
   const identity = identityOptional.data;
   const foundation = foundationOptional.data;
   const rules = rulesOptional.data;
   const agent = agentOptional.data;
   const context = contextOptional.data;
+  const databaseCatalogResult = databaseCatalogOptional.data;
+  const databaseSourcesResult = databaseSourcesOptional.data;
+  const openItemsResult = openItemsOptional.data;
   const warnings = [
     identityOptional.warning,
     foundationOptional.warning,
     rulesOptional.warning,
     agentOptional.warning,
-    contextOptional.warning
+    contextOptional.warning,
+    databaseCatalogOptional.warning,
+    databaseSourcesOptional.warning,
+    openItemsOptional.warning
   ].filter(Boolean);
 
   const row = Array.isArray(core.rows) && core.rows.length ? core.rows[0] : {};
@@ -253,13 +291,28 @@ async function bootstrap(scope, projectName = "", bridgeId = "") {
   const ruleRows = Array.isArray(rules.rows) ? rules.rows : [];
   const agentRow = Array.isArray(agent.rows) && agent.rows.length ? agent.rows[0] : {};
   const contextRow = Array.isArray(context.rows) && context.rows.length ? context.rows[0] : {};
+  const databaseCatalogRows = Array.isArray(databaseCatalogResult.rows) ? databaseCatalogResult.rows : [];
+  const databaseSourceRows = Array.isArray(databaseSourcesResult.rows) ? databaseSourcesResult.rows : [];
+  const openItemRows = Array.isArray(openItemsResult.rows) ? openItemsResult.rows : [];
+  const documentRuleRows = ruleRows.filter(r => {
+    const domain = String(r?.metadata_json?.domain || "").toLowerCase();
+    const key = String(r?.rule_key || "").toUpperCase();
+    return domain.startsWith("document") || key.includes("DOCUMENT") || key.includes("_AI_DOCUMENT_");
+  });
+  const storageRule = ruleRows.find(r => r?.rule_key === "DOCUMENT_AI_ISSUED_STORAGE_POLICY");
+  const storageRoots = storageRule?.metadata_json?.storage_roots || {};
+  const documentStorageRoots = [
+    { entity: "TERMOMECCANICA EOLO", path: storageRoots.eolo || null, purpose: "Archivio fisico dei documenti AI emessi da EOLO" },
+    { entity: "AUTSYS DI AUTELLI ING. GUIDO / ING. GUIDO AUTELLI", path: storageRoots.autsys_piva || null, purpose: "Archivio fisico dei documenti AI emessi da AUTSYS individuale/P.IVA o come Ing. Guido Autelli" },
+    { entity: "AUTSYS S.R.L.S.", path: storageRoots.autsys_srls || null, purpose: "Archivio fisico dei documenti AI emessi da AUTSYS S.R.L.S." }
+  ].filter(x => x.path);
   const found = Boolean(row.project_found);
 
   return {
     ok: true,
     operation: "session.bootstrap",
     source: "ROBERTA",
-    bootstrapVersion: "4",
+    bootstrapVersion: "5",
     completedUtc: new Date().toISOString(),
     scope,
     project: {
@@ -297,6 +350,16 @@ async function bootstrap(scope, projectName = "", bridgeId = "") {
     agentCapabilities: Array.isArray(agentRow.agent_capabilities) ? agentRow.agent_capabilities : [],
     projectBootstrapContextCount: Number(contextRow.project_bootstrap_context_count || 0),
     projectBootstrapContext: Array.isArray(contextRow.project_bootstrap_context) ? contextRow.project_bootstrap_context : [],
+    databaseCatalogCount: databaseCatalogRows.length,
+    databaseCatalog: databaseCatalogRows,
+    projectDatabaseSourceCount: databaseSourceRows.length,
+    projectDatabaseSources: databaseSourceRows,
+    openItemCount: openItemRows.length,
+    openItems: openItemRows,
+    documentRuleCount: documentRuleRows.length,
+    documentRules: documentRuleRows,
+    documentStorageRootCount: documentStorageRoots.length,
+    documentStorageRoots,
     warnings,
     database: core.database || agent.database || context.database || "roberta"
   };
@@ -310,7 +373,7 @@ function buildMcp() {
   const mcp = new McpServer(
     { name: "AUTSYS PC BRIDGE", version: VERSION },
     {
-      instructions: "At the beginning of each new ChatGPT conversation/session in which AUTSYS PC BRIDGE is available, call session_bootstrap with scope GENERAL before relying on persistent AUTSYS agent context. Treat the returned agent identity, active Agent Foundation, confirmed active Agent Rules, verified capabilities, and project context as ROBERTA-sourced persistent context. Do not confuse the agent identity with ROBERTA. If the bootstrap reports warnings or fails, state that persistent context is incomplete rather than inventing it."
+      instructions: "At the beginning of each new ChatGPT conversation/session in which AUTSYS PC BRIDGE is available, call session_bootstrap with scope GENERAL before relying on persistent AUTSYS agent context. Treat the returned agent identity, active Agent Foundation, confirmed active Agent Rules, verified capabilities, project context, database catalog, open project items, and document governance/storage roots as ROBERTA-sourced persistent context. Do not confuse the agent identity with ROBERTA. If the bootstrap reports warnings or fails, state that persistent context is incomplete rather than inventing it."
     }
   );
 
@@ -420,7 +483,7 @@ function buildMcp() {
 
   mcp.registerTool("session_bootstrap", {
     title: "Bootstrap AUTSYS",
-    description: "Bootstrap ROBERTA v4: identità agente, Foundation Agente, Regole Agente attive, capacità operative, catalogo progetti e contesto progetto.",
+    description: "Bootstrap ROBERTA v5: identità agente, Foundation e Regole Agente attive, capacità operative, catalogo progetti, catalogo database e relative sorgenti, ToDo aperti, regole documentali e archivi documenti AI.",
     inputSchema: z.object({
       scope: z.enum(["GENERAL", "PROJECT"]),
       projectName: z.string().optional(),
@@ -625,10 +688,10 @@ app.get("/health", (_req, res) =>
     ok: true,
     product: "AUTSYS MCP FULL FRONT",
     version: VERSION,
-    bootstrapVersion: "4",
+    bootstrapVersion: "5",
     renderTools: true,
     utc: new Date().toISOString()
   }));
 
 app.listen(PORT, "127.0.0.1", () =>
-  console.log(`AUTSYS MCP FULL FRONT ${VERSION} listening on ${PORT}; backend=${BACKEND_PORT}; bootstrap=v4`));
+  console.log(`AUTSYS MCP FULL FRONT ${VERSION} listening on ${PORT}; backend=${BACKEND_PORT}; bootstrap=v5`));
