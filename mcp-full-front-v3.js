@@ -165,7 +165,7 @@ async function bootstrap(scope, projectName = "", bridgeId = "") {
       'authoritative',p.is_authoritative,
       'publicId',p.public_id
     ) ORDER BY p.is_authoritative DESC,p.display_name,p.id)
-    FROM public.autsys_project_registry p),'[]'::jsonb) AS projects,
+    FROM public.autsys_project_registry p WHERE ${scope === "PROJECT" ? where : "true"}),'[]'::jsonb) AS projects,
     (SELECT count(*)::int FROM public.plugin_capabilities_server pc WHERE pc.is_enabled=true) AS plugin_capability_count,
     (SELECT count(*)::int FROM public.autsys_external_capabilities_registry ec WHERE ec.is_enabled=true) AS external_capability_count,
     COALESCE((SELECT jsonb_agg(jsonb_build_object(
@@ -228,7 +228,7 @@ async function bootstrap(scope, projectName = "", bridgeId = "") {
     d.access_mode,d.connection_via,d.is_authoritative,d.lifecycle_status,d.metadata_json
     FROM public.autsys_project_data_sources d
     JOIN public.autsys_project_registry p ON p.public_id=d.project_public_id
-    WHERE upper(COALESCE(d.source_type,'')) IN ('DATABASE','POSTGRESQL','SQLITE','FILE_DATABASE')
+    WHERE ${scope === "PROJECT" ? `(lower(p.display_name)=lower(${sqlLiteral(projectName)}) OR p.project_key=${sqlLiteral(key)}) AND` : "false AND"} upper(COALESCE(d.source_type,'')) IN ('DATABASE','POSTGRESQL','SQLITE','FILE_DATABASE')
        OR d.database_name IS NOT NULL
     ORDER BY p.display_name,d.data_source_key,d.id;`;
 
@@ -361,7 +361,7 @@ function buildMcp() {
   const mcp = new McpServer(
     { name: "AUTSYS PC BRIDGE", version: VERSION },
     {
-      instructions: "At the beginning of each new ChatGPT conversation/session in which AUTSYS PC BRIDGE is available, call session_bootstrap with scope GENERAL before relying on persistent AUTSYS agent context. Treat the returned agent identity, active Agent Foundation, confirmed active Agent Rules, verified capabilities, project context, database catalog, open project items, and document governance/storage roots as ROBERTA-sourced persistent context. Do not confuse the agent identity with ROBERTA. If the bootstrap reports warnings or fails, state that persistent context is incomplete rather than inventing it."
+      instructions: "At conversation start, if the chat belongs to a specific project, call session_bootstrap with scope PROJECT and the exact current project name; do not call GENERAL first. If the chat is general, call session_bootstrap with scope GENERAL. Load only critical governance plus current-project context; retrieve all other project/domain details on demand."
     }
   );
 
@@ -471,7 +471,7 @@ function buildMcp() {
 
   mcp.registerTool("session_bootstrap", {
     title: "Bootstrap AUTSYS",
-    description: "Bootstrap ROBERTA v5: identità agente, Foundation e Regole Agente attive, capacità operative, catalogo progetti, catalogo database e relative sorgenti, ToDo aperti, regole documentali e archivi documenti AI.",
+    description: "Bootstrap ROBERTA v6 project-scoped: governance critica e solo contesto del progetto corrente; il resto si carica on demand.",
     inputSchema: z.object({
       scope: z.enum(["GENERAL", "PROJECT"]),
       projectName: z.string().optional(),
