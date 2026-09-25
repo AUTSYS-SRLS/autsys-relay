@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 
-const VERSION = "0.1.0.7";
+const VERSION = "0.1.0.8";
 const PORT = Number(process.env.PORT || 10006);
 const BACKEND_PORT = Number(process.env.GATEWAY_INTERNAL_PORT || 10001);
 const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
@@ -205,26 +205,14 @@ async function bootstrap(scope, projectName = "", bridgeId = "") {
     WHERE a.bootstrap_enabled=true AND a.lifecycle_status='active' AND f.is_active=true
     ORDER BY f.id;`;
 
-  const agentRulesSql = `SELECT
-    r.id,r.public_id,r.agent_public_id,r.rule_key,r.rule_version,r.rule_text_human,
-    r.rule_scope,r.priority_level,r.lifecycle_status,r.is_active,
-    r.requires_user_confirmation,r.user_confirmed,r.source_type,r.source_reference,
-    r.supersedes_rule_public_id,r.metadata_json,r.created_at,r.updated_at
-    FROM public.autsys_agent_rules r
-    JOIN public.autsys_agent_registry a ON a.public_id=r.agent_public_id
-    WHERE a.bootstrap_enabled=true AND a.lifecycle_status='active'
-      AND r.is_active=true AND r.lifecycle_status='active' AND r.user_confirmed=true
-    ORDER BY r.priority_level ASC,r.rule_key ASC,r.rule_version DESC,r.id ASC;`;
+  const agentRulesSql = `SELECT r.public_id,r.rule_key,r.rule_version,r.rule_text_human,r.priority_level,r.metadata_json FROM public.autsys_agent_rules r JOIN public.autsys_agent_registry a ON a.public_id=r.agent_public_id WHERE a.bootstrap_enabled=true AND a.lifecycle_status='active' AND r.is_active=true AND r.lifecycle_status='active' AND r.user_confirmed=true AND (COALESCE((r.metadata_json->>'bootstrap_pinned')::boolean,false)=true OR COALESCE((r.metadata_json->>'bootstrap_required')::boolean,false)=true) ORDER BY r.priority_level DESC,r.rule_key,r.rule_version DESC,r.id;`;
 
   const agentSql = `SELECT
     count(*)::int AS agent_capability_count,
     COALESCE(jsonb_agg(to_jsonb(a)),'[]'::jsonb) AS agent_capabilities
     FROM public.autsys_agent_capabilities a;`;
 
-  const contextSql = `SELECT
-    count(*)::int AS project_bootstrap_context_count,
-    COALESCE(jsonb_agg(to_jsonb(c)),'[]'::jsonb) AS project_bootstrap_context
-    FROM public.autsys_project_bootstrap_context c;`;
+  const contextSql = scope === "PROJECT" ? `SELECT count(*)::int AS project_bootstrap_context_count, COALESCE(jsonb_agg(to_jsonb(c)),'[]'::jsonb) AS project_bootstrap_context FROM public.autsys_project_bootstrap_context c WHERE lower(c.display_name)=lower(${sqlLiteral(projectName)}) OR c.project_key=${sqlLiteral(key)};` : `SELECT 0::int AS project_bootstrap_context_count,'[]'::jsonb AS project_bootstrap_context;`;
 
   const databaseCatalogSql = `SELECT
     database_key,display_name,owner_type,owner_public_id,owner_name,
@@ -312,7 +300,7 @@ async function bootstrap(scope, projectName = "", bridgeId = "") {
     ok: true,
     operation: "session.bootstrap",
     source: "ROBERTA",
-    bootstrapVersion: "5",
+    bootstrapVersion: "6",
     completedUtc: new Date().toISOString(),
     scope,
     project: {
@@ -339,8 +327,8 @@ async function bootstrap(scope, projectName = "", bridgeId = "") {
       : { required: false },
     pluginCapabilityCount: Number(row.plugin_capability_count || 0),
     externalCapabilityCount: Number(row.external_capability_count || 0),
-    pluginCapabilities: row.plugin_capabilities || [],
-    externalCapabilities: row.external_capabilities || [],
+    pluginCapabilities: [],
+    externalCapabilities: [],
     agent: identityRow,
     agentFoundationCount: foundationRows.length,
     agentFoundation: foundationRows,
@@ -350,16 +338,16 @@ async function bootstrap(scope, projectName = "", bridgeId = "") {
     agentCapabilities: Array.isArray(agentRow.agent_capabilities) ? agentRow.agent_capabilities : [],
     projectBootstrapContextCount: Number(contextRow.project_bootstrap_context_count || 0),
     projectBootstrapContext: Array.isArray(contextRow.project_bootstrap_context) ? contextRow.project_bootstrap_context : [],
-    databaseCatalogCount: databaseCatalogRows.length,
-    databaseCatalog: databaseCatalogRows,
+    databaseCatalogCount: 0,
+    databaseCatalog: [],
     projectDatabaseSourceCount: databaseSourceRows.length,
     projectDatabaseSources: databaseSourceRows,
     openItemCount: openItemRows.length,
     openItems: openItemRows,
-    documentRuleCount: documentRuleRows.length,
-    documentRules: documentRuleRows,
-    documentStorageRootCount: documentStorageRoots.length,
-    documentStorageRoots,
+    documentRuleCount: 0,
+    documentRules: [],
+    documentStorageRootCount: 0,
+    documentStorageRoots: [],
     warnings,
     database: core.database || agent.database || context.database || "roberta"
   };
@@ -688,10 +676,10 @@ app.get("/health", (_req, res) =>
     ok: true,
     product: "AUTSYS MCP FULL FRONT",
     version: VERSION,
-    bootstrapVersion: "5",
+    bootstrapVersion: "6",
     renderTools: true,
     utc: new Date().toISOString()
   }));
 
 app.listen(PORT, "127.0.0.1", () =>
-  console.log(`AUTSYS MCP FULL FRONT ${VERSION} listening on ${PORT}; backend=${BACKEND_PORT}; bootstrap=v5`));
+  console.log(`AUTSYS MCP FULL FRONT ${VERSION} listening on ${PORT}; backend=${BACKEND_PORT}; bootstrap=v6`));
