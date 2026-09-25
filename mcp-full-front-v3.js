@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 
-const VERSION = "0.1.0.8";
+const VERSION = "0.1.0.9";
 const PORT = Number(process.env.PORT || 10006);
 const BACKEND_PORT = Number(process.env.GATEWAY_INTERNAL_PORT || 10001);
 const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
@@ -165,7 +165,7 @@ async function bootstrap(scope, projectName = "", bridgeId = "") {
       'authoritative',p.is_authoritative,
       'publicId',p.public_id
     ) ORDER BY p.is_authoritative DESC,p.display_name,p.id)
-    FROM public.autsys_project_registry p WHERE ${scope === "PROJECT" ? where : "true"}),'[]'::jsonb) AS projects,
+    FROM public.autsys_project_registry p),'[]'::jsonb) AS projects,
     (SELECT count(*)::int FROM public.plugin_capabilities_server pc WHERE pc.is_enabled=true) AS plugin_capability_count,
     (SELECT count(*)::int FROM public.autsys_external_capabilities_registry ec WHERE ec.is_enabled=true) AS external_capability_count,
     COALESCE((SELECT jsonb_agg(jsonb_build_object(
@@ -213,6 +213,21 @@ async function bootstrap(scope, projectName = "", bridgeId = "") {
 
   const contextSql = scope === "PROJECT" ? `SELECT count(*)::int AS project_bootstrap_context_count, COALESCE(jsonb_agg(to_jsonb(c)),'[]'::jsonb) AS project_bootstrap_context FROM public.autsys_project_bootstrap_context c WHERE lower(c.display_name)=lower(${sqlLiteral(projectName)}) OR c.project_key=${sqlLiteral(key)};` : `SELECT 0::int AS project_bootstrap_context_count,'[]'::jsonb AS project_bootstrap_context;`;
 
+  const globalContextSql = `SELECT
+    context_key,context_type,context_value,context_json,priority_level,source_type,source_reference
+    FROM public.autsys_agent_global_context
+    WHERE is_active=true AND bootstrap_required=true
+    ORDER BY priority_level DESC,context_key,id;`;
+
+  const activeLearningSql = `SELECT
+    lesson_key,category,applicability_scope,trigger_context,correct_reasoning,prevention_check,
+    severity,occurrence_count,last_seen_at,metadata_json
+    FROM public.autsys_agent_learning_lessons
+    WHERE is_active=true
+    ORDER BY
+      CASE lower(COALESCE(severity,'')) WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'normal' THEN 4 WHEN 'low' THEN 5 ELSE 6 END,
+      last_seen_at DESC NULLS LAST,id DESC;`;
+
   const databaseCatalogSql = `SELECT database_key,display_name FROM public.autsys_database_catalog WHERE false;`;
 
   const databaseSourcesSql = `SELECT
@@ -237,12 +252,14 @@ async function bootstrap(scope, projectName = "", bridgeId = "") {
       oi.updated_at DESC NULLS LAST,oi.id;`;
 
   const core = await queryRows(coreSql, bridgeId, "bootstrap core");
-  const [identityOptional, foundationOptional, rulesOptional, agentOptional, contextOptional, databaseCatalogOptional, databaseSourcesOptional, openItemsOptional] = await Promise.all([
+  const [identityOptional, foundationOptional, rulesOptional, agentOptional, contextOptional, globalContextOptional, activeLearningOptional, databaseCatalogOptional, databaseSourcesOptional, openItemsOptional] = await Promise.all([
     optionalQueryRows(agentIdentitySql, bridgeId, "bootstrap agent identity"),
     optionalQueryRows(agentFoundationSql, bridgeId, "bootstrap agent foundation"),
     optionalQueryRows(agentRulesSql, bridgeId, "bootstrap agent rules"),
     optionalQueryRows(agentSql, bridgeId, "bootstrap agent capabilities"),
     optionalQueryRows(contextSql, bridgeId, "bootstrap project context"),
+    optionalQueryRows(globalContextSql, bridgeId, "bootstrap global context"),
+    optionalQueryRows(activeLearningSql, bridgeId, "bootstrap active learning"),
     optionalQueryRows(databaseCatalogSql, bridgeId, "bootstrap database catalog"),
     optionalQueryRows(databaseSourcesSql, bridgeId, "bootstrap project database sources"),
     optionalQueryRows(openItemSql, bridgeId, "bootstrap open items")
@@ -252,6 +269,8 @@ async function bootstrap(scope, projectName = "", bridgeId = "") {
   const rules = rulesOptional.data;
   const agent = agentOptional.data;
   const context = contextOptional.data;
+  const globalContextResult = globalContextOptional.data;
+  const activeLearningResult = activeLearningOptional.data;
   const databaseCatalogResult = databaseCatalogOptional.data;
   const databaseSourcesResult = databaseSourcesOptional.data;
   const openItemsResult = openItemsOptional.data;
@@ -261,6 +280,8 @@ async function bootstrap(scope, projectName = "", bridgeId = "") {
     rulesOptional.warning,
     agentOptional.warning,
     contextOptional.warning,
+    globalContextOptional.warning,
+    activeLearningOptional.warning,
     databaseCatalogOptional.warning,
     databaseSourcesOptional.warning,
     openItemsOptional.warning
@@ -272,6 +293,8 @@ async function bootstrap(scope, projectName = "", bridgeId = "") {
   const ruleRows = Array.isArray(rules.rows) ? rules.rows : [];
   const agentRow = Array.isArray(agent.rows) && agent.rows.length ? agent.rows[0] : {};
   const contextRow = Array.isArray(context.rows) && context.rows.length ? context.rows[0] : {};
+  const globalContextRows = Array.isArray(globalContextResult.rows) ? globalContextResult.rows : [];
+  const activeLearningRows = Array.isArray(activeLearningResult.rows) ? activeLearningResult.rows : [];
   const databaseCatalogRows = Array.isArray(databaseCatalogResult.rows) ? databaseCatalogResult.rows : [];
   const databaseSourceRows = Array.isArray(databaseSourcesResult.rows) ? databaseSourcesResult.rows : [];
   const openItemRows = Array.isArray(openItemsResult.rows) ? openItemsResult.rows : [];
@@ -294,6 +317,7 @@ async function bootstrap(scope, projectName = "", bridgeId = "") {
     operation: "session.bootstrap",
     source: "ROBERTA",
     bootstrapVersion: "6",
+    bootstrapRevision: "6.1",
     completedUtc: new Date().toISOString(),
     scope,
     project: {
@@ -309,7 +333,11 @@ async function bootstrap(scope, projectName = "", bridgeId = "") {
       authoritative: Boolean(row.is_authoritative)
     },
     projectCount: Number(row.project_count || 0),
-    projects: Array.isArray(row.projects) ? (scope === "PROJECT" ? row.projects : row.projects.map(p => ({ projectKey:p.projectKey, displayName:p.displayName, entityKind:p.entityKind, lifecycleStatus:p.lifecycleStatus, authoritative:p.authoritative, publicId:p.publicId }))) : [],
+    projects: Array.isArray(row.projects) ? row.projects.map(p => ({ projectKey:p.projectKey, displayName:p.displayName, entityKind:p.entityKind, lifecycleStatus:p.lifecycleStatus, authoritative:p.authoritative, publicId:p.publicId })) : [],
+    globalContextCount: globalContextRows.length,
+    globalContext: globalContextRows,
+    activeLearningCount: activeLearningRows.length,
+    activeLearning: activeLearningRows,
     registration: scope === "PROJECT" && !found
       ? {
           required: true,
@@ -354,7 +382,7 @@ function buildMcp() {
   const mcp = new McpServer(
     { name: "AUTSYS PC BRIDGE", version: VERSION },
     {
-      instructions: "At conversation start, if the chat belongs to a specific project, call session_bootstrap with scope PROJECT and the exact current project name; do not call GENERAL first. If the chat is general, call session_bootstrap with scope GENERAL. Load only critical governance plus current-project context; retrieve all other project/domain details on demand."
+      instructions: "At conversation start, if the chat belongs to a specific project, call session_bootstrap with scope PROJECT and the exact current project name; do not call GENERAL first. If the chat is general, call session_bootstrap with scope GENERAL. Always retain the compact global context, active learning and compact project catalog. In PROJECT scope, load detailed context only for the current project; retrieve other project/domain details on demand."
     }
   );
 
@@ -464,7 +492,7 @@ function buildMcp() {
 
   mcp.registerTool("session_bootstrap", {
     title: "Bootstrap AUTSYS",
-    description: "Bootstrap ROBERTA v6 project-scoped: governance critica e solo contesto del progetto corrente; il resto si carica on demand.",
+    description: "Bootstrap ROBERTA v6.1: contesto globale compatto, learning attivi e catalogo sintetico progetti sempre presenti; nelle chat di progetto il dettaglio resta limitato al progetto corrente.",
     inputSchema: z.object({
       scope: z.enum(["GENERAL", "PROJECT"]),
       projectName: z.string().optional(),
@@ -670,6 +698,7 @@ app.get("/health", (_req, res) =>
     product: "AUTSYS MCP FULL FRONT",
     version: VERSION,
     bootstrapVersion: "6",
+    bootstrapRevision: "6.1",
     renderTools: true,
     utc: new Date().toISOString()
   }));
