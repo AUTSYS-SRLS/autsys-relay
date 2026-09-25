@@ -207,20 +207,13 @@ async function bootstrap(scope, projectName = "", bridgeId = "") {
 
   const agentRulesSql = `SELECT r.public_id,r.rule_key,r.rule_version,r.rule_text_human,r.priority_level,r.metadata_json FROM public.autsys_agent_rules r JOIN public.autsys_agent_registry a ON a.public_id=r.agent_public_id WHERE a.bootstrap_enabled=true AND a.lifecycle_status='active' AND r.is_active=true AND r.lifecycle_status='active' AND r.user_confirmed=true AND (COALESCE((r.metadata_json->>'bootstrap_pinned')::boolean,false)=true OR COALESCE((r.metadata_json->>'bootstrap_required')::boolean,false)=true) ORDER BY r.priority_level DESC,r.rule_key,r.rule_version DESC,r.id;`;
 
-  const agentSql = `SELECT
-    count(*)::int AS agent_capability_count,
-    COALESCE(jsonb_agg(to_jsonb(a)),'[]'::jsonb) AS agent_capabilities
-    FROM public.autsys_agent_capabilities a;`;
+  const agentSql = `SELECT count(*)::int AS agent_capability_count,
+    COALESCE(jsonb_agg(jsonb_build_object('capability_key',a.capability_key,'capability_type',a.capability_type,'access_mode',a.access_mode,'risk_level',a.risk_level,'verification_status',a.verification_status) ORDER BY a.capability_key),'[]'::jsonb) AS agent_capabilities
+    FROM public.autsys_agent_capabilities a WHERE a.is_enabled=true;`;
 
   const contextSql = scope === "PROJECT" ? `SELECT count(*)::int AS project_bootstrap_context_count, COALESCE(jsonb_agg(to_jsonb(c)),'[]'::jsonb) AS project_bootstrap_context FROM public.autsys_project_bootstrap_context c WHERE lower(c.display_name)=lower(${sqlLiteral(projectName)}) OR c.project_key=${sqlLiteral(key)};` : `SELECT 0::int AS project_bootstrap_context_count,'[]'::jsonb AS project_bootstrap_context;`;
 
-  const databaseCatalogSql = `SELECT
-    database_key,display_name,owner_type,owner_public_id,owner_name,
-    product_public_id,product_name,database_type,engine,version,locator,
-    database_name,schema_name,access_mode,role,is_authoritative,
-    lifecycle_status,connection_via,notes,metadata_json,updated_at
-    FROM public.autsys_database_catalog
-    ORDER BY is_authoritative DESC,lifecycle_status,display_name,id;`;
+  const databaseCatalogSql = `SELECT database_key,display_name FROM public.autsys_database_catalog WHERE false;`;
 
   const databaseSourcesSql = `SELECT
     p.project_key,p.display_name AS project_name,
@@ -228,8 +221,8 @@ async function bootstrap(scope, projectName = "", bridgeId = "") {
     d.access_mode,d.connection_via,d.is_authoritative,d.lifecycle_status,d.metadata_json
     FROM public.autsys_project_data_sources d
     JOIN public.autsys_project_registry p ON p.public_id=d.project_public_id
-    WHERE ${scope === "PROJECT" ? `(lower(p.display_name)=lower(${sqlLiteral(projectName)}) OR p.project_key=${sqlLiteral(key)}) AND` : "false AND"} upper(COALESCE(d.source_type,'')) IN ('DATABASE','POSTGRESQL','SQLITE','FILE_DATABASE')
-       OR d.database_name IS NOT NULL
+    WHERE ${scope === "PROJECT" ? `(lower(p.display_name)=lower(${sqlLiteral(projectName)}) OR p.project_key=${sqlLiteral(key)}) AND` : "false AND"} (upper(COALESCE(d.source_type,'')) IN ('DATABASE','POSTGRESQL','SQLITE','FILE_DATABASE')
+       OR d.database_name IS NOT NULL)
     ORDER BY p.display_name,d.data_source_key,d.id;`;
 
   const openItemSql = `SELECT
@@ -238,7 +231,7 @@ async function bootstrap(scope, projectName = "", bridgeId = "") {
     FROM public.autsys_project_open_items oi
     LEFT JOIN public.autsys_project_registry p ON p.public_id=oi.project_public_id
     WHERE lower(COALESCE(oi.status,'')) NOT IN ('completed','closed','done','cancelled','canceled')
-      ${scope === "PROJECT" ? `AND (lower(p.display_name)=lower(${sqlLiteral(projectName)}) OR p.project_key=${sqlLiteral(key)})` : ""}
+      ${scope === "PROJECT" ? `AND (lower(p.display_name)=lower(${sqlLiteral(projectName)}) OR p.project_key=${sqlLiteral(key)})` : "AND false"}
     ORDER BY
       CASE lower(COALESCE(oi.priority,'')) WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END,
       oi.updated_at DESC NULLS LAST,oi.id;`;
@@ -316,7 +309,7 @@ async function bootstrap(scope, projectName = "", bridgeId = "") {
       authoritative: Boolean(row.is_authoritative)
     },
     projectCount: Number(row.project_count || 0),
-    projects: Array.isArray(row.projects) ? row.projects : [],
+    projects: Array.isArray(row.projects) ? (scope === "PROJECT" ? row.projects : row.projects.map(p => ({ projectKey:p.projectKey, displayName:p.displayName, entityKind:p.entityKind, lifecycleStatus:p.lifecycleStatus, authoritative:p.authoritative, publicId:p.publicId }))) : [],
     registration: scope === "PROJECT" && !found
       ? {
           required: true,
