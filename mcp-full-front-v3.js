@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 
-const VERSION = "0.1.0.10";
+const VERSION = "0.1.0.11";
 const PORT = Number(process.env.PORT || 10006);
 const BACKEND_PORT = Number(process.env.GATEWAY_INTERNAL_PORT || 10001);
 const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
@@ -385,6 +385,18 @@ function buildMcp() {
       instructions: "At conversation start, if the chat belongs to a specific project, call session_bootstrap with scope PROJECT and the exact current project name; do not call GENERAL first. If the chat is general, call session_bootstrap with scope GENERAL. Always retain the compact global context, active learning and compact project catalog. In PROJECT scope, load detailed context only for the current project; retrieve other project/domain details on demand."
     }
   );
+
+  mcp.registerTool("pc_execute", {
+    title: "Esegui capability AUTSYS PC BRIDGE",
+    description: "Dispatcher stabile verso una capability nativa del Bridge. Usa operation per indicare il tool interno (es. fs.rename, fs.move, fs.write_binary) e arguments per i parametri. Le capability restano soggette alle policy e protezioni native del Bridge.",
+    inputSchema: z.object({
+      operation: z.string().min(1),
+      arguments: z.record(z.any()).default({}),
+      bridgeId: z.string().optional()
+    }),
+    annotations: wr
+  }, async ({ operation, arguments: args, bridgeId }) =>
+    result(await callBridge(operation, args || {}, bridgeId || "")));
 
   mcp.registerTool("pc_health", {
     title: "Stato PC Bridge",
