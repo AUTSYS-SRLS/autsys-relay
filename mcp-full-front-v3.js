@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 
-const VERSION = "0.1.0.9";
+const VERSION = "0.1.0.10";
 const PORT = Number(process.env.PORT || 10006);
 const BACKEND_PORT = Number(process.env.GATEWAY_INTERNAL_PORT || 10001);
 const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
@@ -524,6 +524,42 @@ function buildMcp() {
     annotations: wr
   }, async ({ bridgeId, projectName, ...rest }) =>
     result(await callBridge("project.register", { displayName: projectName, ...rest }, bridgeId || "")));
+
+  mcp.registerTool("pc_file_stage_from_chat", {
+    title: "Trasferisci file ChatGPT al PC",
+    description: "Riceve direttamente un file allegato/autorizzato da ChatGPT e lo trasferisce in staging sul PC tramite AUTSYS PC BRIDGE, con verifica SHA-256.",
+    inputSchema: z.object({
+      file: z.object({
+        download_url: z.string().url(),
+        file_id: z.string().min(1),
+        mime_type: z.string().optional(),
+        file_name: z.string().optional()
+      }),
+      updateId: z.string().min(8).max(100).optional(),
+      relativePath: z.string().min(1).optional(),
+      bridgeId: z.string().optional()
+    }),
+    annotations: wr,
+    _meta: { "openai/fileParams": ["file"] }
+  }, async ({ file, updateId, relativePath, bridgeId }) => {
+    try {
+      const response = await fetch(file.download_url, { signal: AbortSignal.timeout(120000) });
+      if (!response.ok) throw new Error("Download file ChatGPT fallito: HTTP " + response.status);
+      const bytes = Buffer.from(await response.arrayBuffer());
+      if (bytes.length > 32 * 1024 * 1024) throw new Error("File oltre il limite di 32 MiB del Bridge.");
+      const sha256 = crypto.createHash("sha256").update(bytes).digest("hex");
+      const id = updateId || ("chat_" + Date.now() + "_" + crypto.randomBytes(4).toString("hex"));
+      const rel = relativePath || file.file_name || (file.file_id + ".bin");
+      return result(await callBridge("bridge.update.stage", {
+        updateId: id,
+        relativePath: rel,
+        sha256,
+        contentBase64: bytes.toString("base64")
+      }, bridgeId || ""));
+    } catch (e) {
+      return jsonResult({ ok: false, error: String(e?.message || e) }, true);
+    }
+  });
 
   mcp.registerTool("bridge_update_stage", {
     title: "Prepara aggiornamento Bridge",
