@@ -6,12 +6,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 
-const VERSION = "0.1.0.10";
+const VERSION = "0.1.0.11";
 const PORT = Number(process.env.PORT || 10000);
 const BRIDGE_TOKEN = process.env.BRIDGE_TOKEN || "";
 const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
 const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 20000);
-const MAX_JSON_BYTES = Number(process.env.MAX_JSON_BYTES || 2 * 1024 * 1024);
+const MAX_JSON_BYTES = Number(process.env.MAX_JSON_BYTES || 48 * 1024 * 1024);
 
 if (!BRIDGE_TOKEN || !CONTROL_TOKEN) {
   console.error("Missing BRIDGE_TOKEN or CONTROL_TOKEN");
