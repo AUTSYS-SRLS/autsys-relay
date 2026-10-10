@@ -6,7 +6,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 
-const VERSION = "0.1.0.12";
+const VERSION = "0.1.0.13";
 const PORT = Number(process.env.PORT || 10000);
 const BRIDGE_TOKEN = process.env.BRIDGE_TOKEN || "";
 const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
@@ -15,7 +15,7 @@ const LONG_REQUEST_TIMEOUT_MS = Number(process.env.LONG_REQUEST_TIMEOUT_MS || 30
 const WRITE_REQUEST_TIMEOUT_MS = Number(process.env.WRITE_REQUEST_TIMEOUT_MS || 60000);
 
 function timeoutForTool(tool) {
-  if (tool === "fs.delete" || tool === "bridge.update.apply" || tool === "pg.roberta.migrate") return LONG_REQUEST_TIMEOUT_MS;
+  if (["fs.delete","fs.copy","fs.replace","fs.move_path","fs.hash_tree","fs.compare","fs.tree","fs.search_text","fs.zip","fs.unzip","bridge.update.apply","pg.roberta.migrate"].includes(tool)) return LONG_REQUEST_TIMEOUT_MS;
   if (tool === "pg.roberta.write") return WRITE_REQUEST_TIMEOUT_MS;
   return REQUEST_TIMEOUT_MS;
 }
