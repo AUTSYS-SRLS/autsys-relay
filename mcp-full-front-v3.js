@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 
-const VERSION = "0.1.0.15";
+const VERSION = "0.1.0.16";
 const PORT = Number(process.env.PORT || 10006);
 const BACKEND_PORT = Number(process.env.GATEWAY_INTERNAL_PORT || 10001);
 const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
@@ -734,6 +734,23 @@ function buildMcp() {
     annotations: wr
   }, async ({ path, content, createDirectories, expectedSha256, bridgeId }) =>
     result(await callBridge("fs.append_text", { path, content, createDirectories, expectedSha256 }, bridgeId || "")));
+
+  mcp.registerTool("pc_fs_patch_text", {
+    title: "Patch testo AUTSYS",
+    description: "Applica sostituzioni testuali esatte a un file autorizzato con SHA opzionale, backup atomico e verifica.",
+    inputSchema: z.object({
+      path: z.string().min(1),
+      expectedSha256: z.string().optional(),
+      replacements: z.array(z.object({
+        oldText: z.string().min(1),
+        newText: z.string(),
+        expectedCount: z.number().int().min(1).max(10000).default(1)
+      })).min(1).max(100),
+      bridgeId: z.string().optional()
+    }),
+    annotations: wr
+  }, async ({ path, expectedSha256, replacements, bridgeId }) =>
+    result(await callBridge("fs.patch_text", { path, expectedSha256, replacements }, bridgeId || "")));
 
   mcp.registerTool("pc_fs_copy", {
     title: "Copia file o cartella AUTSYS",
