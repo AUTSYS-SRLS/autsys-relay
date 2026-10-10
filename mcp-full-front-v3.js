@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 
-const VERSION = "0.1.0.14";
+const VERSION = "0.1.0.15";
 const PORT = Number(process.env.PORT || 10006);
 const BACKEND_PORT = Number(process.env.GATEWAY_INTERNAL_PORT || 10001);
 const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
@@ -16,7 +16,7 @@ app.disable("x-powered-by");
 app.use(express.json({ limit: "40mb" }));
 
 function timeoutFor(tool) {
-  if (tool === "pg.roberta.migrate" || tool === "bridge.update.apply" || tool === "fs.delete") return 300000;
+  if (["pg.roberta.migrate","bridge.update.apply","fs.delete","fs.copy","fs.replace","fs.move_path","fs.hash_tree","fs.compare","fs.tree","fs.search_text","fs.zip","fs.unzip"].includes(tool)) return 300000;
   if (tool === "pg.roberta.write") return 60000;
   return 30000;
 }
@@ -669,6 +669,245 @@ function buildMcp() {
     return job ? jsonResult({ ok: true, job }) : jsonResult({ ok: false, error: "JOB_NOT_FOUND" }, true);
   });
 
+
+
+  mcp.registerTool("pc_fs_exists", {
+    title: "Verifica percorso AUTSYS",
+    description: "Verifica se un percorso locale esiste e se e file o cartella.",
+    inputSchema: z.object({ path: z.string().min(1), bridgeId: z.string().optional() }),
+    annotations: ro
+  }, async ({ path, bridgeId }) => result(await callBridge("fs.exists", { path }, bridgeId || "")));
+
+  mcp.registerTool("pc_fs_stat", {
+    title: "Metadata percorso AUTSYS",
+    description: "Legge dimensione, attributi e timestamp di file/cartelle locali.",
+    inputSchema: z.object({ path: z.string().min(1), bridgeId: z.string().optional() }),
+    annotations: ro
+  }, async ({ path, bridgeId }) => result(await callBridge("fs.stat", { path }, bridgeId || "")));
+
+  mcp.registerTool("pc_fs_drives", {
+    title: "Volumi locali AUTSYS",
+    description: "Elenca volumi locali e spazio disponibile.",
+    inputSchema: z.object({ bridgeId: z.string().optional() }),
+    annotations: ro
+  }, async ({ bridgeId }) => result(await callBridge("fs.drives", {}, bridgeId || "")));
+
+  mcp.registerTool("pc_fs_read_binary", {
+    title: "Leggi binario AUTSYS",
+    description: "Legge un chunk binario Base64 con offset.",
+    inputSchema: z.object({
+      path: z.string().min(1),
+      offset: z.number().int().nonnegative().default(0),
+      length: z.number().int().min(0).max(8388608).default(1048576),
+      bridgeId: z.string().optional()
+    }),
+    annotations: ro
+  }, async ({ path, offset, length, bridgeId }) =>
+    result(await callBridge("fs.read_binary", { path, offset, length }, bridgeId || "")));
+
+  mcp.registerTool("pc_fs_write_binary", {
+    title: "Scrivi binario AUTSYS",
+    description: "Crea, sovrascrive, accoda o patcha dati binari Base64 con backup e hash.",
+    inputSchema: z.object({
+      path: z.string().min(1),
+      dataBase64: z.string(),
+      mode: z.enum(["create","overwrite","append","patch"]).default("overwrite"),
+      offset: z.number().int().nonnegative().optional(),
+      createDirectories: z.boolean().default(false),
+      expectedSha256: z.string().optional(),
+      bridgeId: z.string().optional()
+    }),
+    annotations: wr
+  }, async ({ path, dataBase64, mode, offset, createDirectories, expectedSha256, bridgeId }) =>
+    result(await callBridge("fs.write_binary", { path, dataBase64, mode, offset, createDirectories, expectedSha256 }, bridgeId || "")));
+
+  mcp.registerTool("pc_fs_append_text", {
+    title: "Accoda testo AUTSYS",
+    description: "Accoda testo UTF-8 con backup governato.",
+    inputSchema: z.object({
+      path: z.string().min(1),
+      content: z.string(),
+      createDirectories: z.boolean().default(false),
+      expectedSha256: z.string().optional(),
+      bridgeId: z.string().optional()
+    }),
+    annotations: wr
+  }, async ({ path, content, createDirectories, expectedSha256, bridgeId }) =>
+    result(await callBridge("fs.append_text", { path, content, createDirectories, expectedSha256 }, bridgeId || "")));
+
+  mcp.registerTool("pc_fs_copy", {
+    title: "Copia file o cartella AUTSYS",
+    description: "Copia nativamente file o alberi di cartelle con backup e verifica hash.",
+    inputSchema: z.object({
+      sourcePath: z.string().min(1),
+      destinationPath: z.string().min(1),
+      overwrite: z.boolean().default(false),
+      createDirectories: z.boolean().default(true),
+      bridgeId: z.string().optional()
+    }),
+    annotations: wr
+  }, async ({ sourcePath, destinationPath, overwrite, createDirectories, bridgeId }) =>
+    result(await callBridge("fs.copy", { sourcePath, destinationPath, overwrite, createDirectories }, bridgeId || "")));
+
+  mcp.registerTool("pc_fs_replace", {
+    title: "Sostituisci file o cartella AUTSYS",
+    description: "Sostituisce una destinazione con una sorgente mantenendo backup e verifica.",
+    inputSchema: z.object({
+      sourcePath: z.string().min(1),
+      destinationPath: z.string().min(1),
+      createDirectories: z.boolean().default(true),
+      bridgeId: z.string().optional()
+    }),
+    annotations: wr
+  }, async ({ sourcePath, destinationPath, createDirectories, bridgeId }) =>
+    result(await callBridge("fs.replace", { sourcePath, destinationPath, createDirectories }, bridgeId || "")));
+
+  mcp.registerTool("pc_fs_move_path", {
+    title: "Sposta file o cartella AUTSYS",
+    description: "Sposta file o directory, anche cross-volume, con verifica prima della rimozione sorgente.",
+    inputSchema: z.object({
+      sourcePath: z.string().min(1),
+      destinationPath: z.string().min(1),
+      overwrite: z.boolean().default(false),
+      createDirectories: z.boolean().default(true),
+      bridgeId: z.string().optional()
+    }),
+    annotations: wr
+  }, async ({ sourcePath, destinationPath, overwrite, createDirectories, bridgeId }) =>
+    result(await callBridge("fs.move_path", { sourcePath, destinationPath, overwrite, createDirectories }, bridgeId || "")));
+
+  mcp.registerTool("pc_fs_rename_path", {
+    title: "Rinomina file o cartella AUTSYS",
+    description: "Rinomina un file o una directory nella stessa cartella.",
+    inputSchema: z.object({
+      path: z.string().min(1),
+      newName: z.string().min(1),
+      overwrite: z.boolean().default(false),
+      bridgeId: z.string().optional()
+    }),
+    annotations: wr
+  }, async ({ path, newName, overwrite, bridgeId }) =>
+    result(await callBridge("fs.rename_path", { path, newName, overwrite }, bridgeId || "")));
+
+  mcp.registerTool("pc_fs_hash_tree", {
+    title: "Hash albero AUTSYS",
+    description: "Calcola hash deterministico di una directory e statistiche dell'albero.",
+    inputSchema: z.object({ path: z.string().min(1), bridgeId: z.string().optional() }),
+    annotations: ro
+  }, async ({ path, bridgeId }) => result(await callBridge("fs.hash_tree", { path }, bridgeId || "")));
+
+  mcp.registerTool("pc_fs_compare", {
+    title: "Confronta percorsi AUTSYS",
+    description: "Confronta file o directory per contenuto/hash.",
+    inputSchema: z.object({ pathA: z.string().min(1), pathB: z.string().min(1), bridgeId: z.string().optional() }),
+    annotations: ro
+  }, async ({ pathA, pathB, bridgeId }) => result(await callBridge("fs.compare", { pathA, pathB }, bridgeId || "")));
+
+  mcp.registerTool("pc_fs_set_metadata", {
+    title: "Modifica metadata AUTSYS",
+    description: "Imposta attributi Windows e timestamp di un file o cartella autorizzato.",
+    inputSchema: z.object({
+      path: z.string().min(1),
+      readOnly: z.boolean().optional(),
+      hidden: z.boolean().optional(),
+      archive: z.boolean().optional(),
+      creationUtc: z.string().optional(),
+      lastWriteUtc: z.string().optional(),
+      lastAccessUtc: z.string().optional(),
+      bridgeId: z.string().optional()
+    }),
+    annotations: wr
+  }, async ({ path, readOnly, hidden, archive, creationUtc, lastWriteUtc, lastAccessUtc, bridgeId }) =>
+    result(await callBridge("fs.set_metadata", { path, readOnly, hidden, archive, creationUtc, lastWriteUtc, lastAccessUtc }, bridgeId || "")));
+
+  mcp.registerTool("pc_fs_touch", {
+    title: "Touch file AUTSYS",
+    description: "Crea un file vuoto se assente o aggiorna il timestamp last-write.",
+    inputSchema: z.object({
+      path: z.string().min(1),
+      lastWriteUtc: z.string().optional(),
+      createDirectories: z.boolean().default(false),
+      bridgeId: z.string().optional()
+    }),
+    annotations: wr
+  }, async ({ path, lastWriteUtc, createDirectories, bridgeId }) =>
+    result(await callBridge("fs.touch", { path, lastWriteUtc, createDirectories }, bridgeId || "")));
+
+  mcp.registerTool("pc_fs_truncate", {
+    title: "Ridimensiona file AUTSYS",
+    description: "Ridimensiona un file con backup obbligatorio.",
+    inputSchema: z.object({ path: z.string().min(1), length: z.number().int().nonnegative(), bridgeId: z.string().optional() }),
+    annotations: wr
+  }, async ({ path, length, bridgeId }) => result(await callBridge("fs.truncate", { path, length }, bridgeId || "")));
+
+  mcp.registerTool("pc_fs_tree", {
+    title: "Albero cartelle AUTSYS",
+    description: "Elenca ricorsivamente un albero locale con limiti governati.",
+    inputSchema: z.object({
+      path: z.string().min(1),
+      maxDepth: z.number().int().min(0).max(64).default(8),
+      maxEntries: z.number().int().min(1).max(50000).default(5000),
+      bridgeId: z.string().optional()
+    }),
+    annotations: ro
+  }, async ({ path, maxDepth, maxEntries, bridgeId }) =>
+    result(await callBridge("fs.tree", { path, maxDepth, maxEntries }, bridgeId || "")));
+
+  mcp.registerTool("pc_fs_read_lines", {
+    title: "Leggi righe AUTSYS",
+    description: "Legge una finestra di righe senza caricare tutto il file.",
+    inputSchema: z.object({
+      path: z.string().min(1),
+      startLine: z.number().int().positive().default(1),
+      maxLines: z.number().int().min(1).max(5000).default(200),
+      bridgeId: z.string().optional()
+    }),
+    annotations: ro
+  }, async ({ path, startLine, maxLines, bridgeId }) =>
+    result(await callBridge("fs.read_lines", { path, startLine, maxLines }, bridgeId || "")));
+
+  mcp.registerTool("pc_fs_search_text", {
+    title: "Cerca testo AUTSYS",
+    description: "Cerca testo o regex nei file locali con limiti governati.",
+    inputSchema: z.object({
+      path: z.string().min(1),
+      query: z.string().min(1),
+      regex: z.boolean().default(false),
+      caseSensitive: z.boolean().default(false),
+      maxResults: z.number().int().min(1).max(5000).default(500),
+      bridgeId: z.string().optional()
+    }),
+    annotations: ro
+  }, async ({ path, query, regex, caseSensitive, maxResults, bridgeId }) =>
+    result(await callBridge("fs.search_text", { path, query, regex, caseSensitive, maxResults }, bridgeId || "")));
+
+  mcp.registerTool("pc_fs_zip", {
+    title: "Crea ZIP AUTSYS",
+    description: "Crea un archivio ZIP verificato da file/cartelle locali.",
+    inputSchema: z.object({
+      sourcePath: z.string().min(1),
+      destinationPath: z.string().min(1),
+      overwrite: z.boolean().default(false),
+      createDirectories: z.boolean().default(true),
+      bridgeId: z.string().optional()
+    }),
+    annotations: wr
+  }, async ({ sourcePath, destinationPath, overwrite, createDirectories, bridgeId }) =>
+    result(await callBridge("fs.zip", { sourcePath, destinationPath, overwrite, createDirectories }, bridgeId || "")));
+
+  mcp.registerTool("pc_fs_unzip", {
+    title: "Estrai ZIP AUTSYS",
+    description: "Estrae ZIP con protezione zip-slip, limiti, backup e verifica.",
+    inputSchema: z.object({
+      sourcePath: z.string().min(1),
+      destinationPath: z.string().min(1),
+      overwrite: z.boolean().default(false),
+      createDirectories: z.boolean().default(true),
+      bridgeId: z.string().optional()
+    }),
+    annotations: wr
+  }, async ({ sourcePath, destinationPath, overwrite, createDirectories, bridgeId }) =>
+    result(await callBridge("fs.unzip", { sourcePath, destinationPath, overwrite, createDirectories }, bridgeId || "")));
 
   mcp.registerTool("pc_process_start", {
     title: "Avvia processo AUTSYS",
