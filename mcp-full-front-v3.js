@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 
-const VERSION = "0.1.0.12";
+const VERSION = "0.1.0.13";
 const PORT = Number(process.env.PORT || 10006);
 const BACKEND_PORT = Number(process.env.GATEWAY_INTERNAL_PORT || 10001);
 const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
@@ -614,16 +614,16 @@ function buildMcp() {
 
   mcp.registerTool("pc_fs_mkdir", {
     title: "Crea cartella AUTSYS",
-    description: "Crea in modo governato una cartella entro le radici autorizzate e verifica che esista. Operazione idempotente.",
+    description: "Crea nativamente una cartella entro le radici autorizzate e verifica che esista. Operazione idempotente.",
     inputSchema: z.object({
       path: z.string().min(1),
+      parents: z.boolean().default(true),
+      existOk: z.boolean().default(true),
       bridgeId: z.string().optional()
     }),
     annotations: wi
-  }, async ({ path, bridgeId }) => {
-    try { return jsonResult({ ok: true, result: await ensureDirectory(path, bridgeId || "") }); }
-    catch (e) { return jsonResult({ ok: false, error: String(e?.message || e) }, true); }
-  });
+  }, async ({ path, parents, existOk, bridgeId }) =>
+    result(await callBridge("fs.mkdir", { path, parents, existOk }, bridgeId || "")));
 
   mcp.registerTool("pc_fs_write_text", {
     title: "Scrivi file AUTSYS",
@@ -640,7 +640,7 @@ function buildMcp() {
       recursive: z.boolean().default(false),
       bridgeId: z.string().optional()
     }),
-    annotations: de
+    annotations: wi
   }, async ({ path, recursive, bridgeId }) => result(await callBridge("fs.delete", { path, recursive }, bridgeId || "")));
 
   mcp.registerTool("pc_fs_delete_async", {
@@ -651,7 +651,7 @@ function buildMcp() {
       recursive: z.boolean().default(false),
       bridgeId: z.string().optional()
     }),
-    annotations: de
+    annotations: wi
   }, async ({ path, recursive, bridgeId }) => {
     const job = startAsyncJob("fs.delete", { path, recursive }, async () =>
       bridgePayload(await callBridge("fs.delete", { path, recursive }, bridgeId || ""), "fs.delete"));
@@ -683,6 +683,18 @@ function buildMcp() {
     annotations: wr
   }, async ({ kind, target, args, workingDirectory, bridgeId }) =>
     result(await callBridge("process.start", { kind, target, args: args || [], workingDirectory }, bridgeId || "")));
+
+  mcp.registerTool("pc_process_list", {
+    title: "Elenca processi AUTSYS",
+    description: "Elenca in modo sintetico i processi avviati e tracciati dal Bridge; puo filtrare per cartella/progetto.",
+    inputSchema: z.object({
+      pathPrefix: z.string().optional(),
+      includeExited: z.boolean().default(false),
+      bridgeId: z.string().optional()
+    }),
+    annotations: ro
+  }, async ({ pathPrefix, includeExited, bridgeId }) =>
+    result(await callBridge("process.list", { pathPrefix: pathPrefix || "", includeExited }, bridgeId || "")));
 
   mcp.registerTool("pc_process_status", {
     title: "Stato processo AUTSYS",
