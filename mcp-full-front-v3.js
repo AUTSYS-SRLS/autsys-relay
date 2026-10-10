@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 
-const VERSION = "0.1.0.13";
+const VERSION = "0.1.0.14";
 const PORT = Number(process.env.PORT || 10006);
 const BACKEND_PORT = Number(process.env.GATEWAY_INTERNAL_PORT || 10001);
 const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
@@ -695,6 +695,32 @@ function buildMcp() {
     annotations: ro
   }, async ({ pathPrefix, includeExited, bridgeId }) =>
     result(await callBridge("process.list", { pathPrefix: pathPrefix || "", includeExited }, bridgeId || "")));
+
+  mcp.registerTool("pc_process_discover", {
+    title: "Scopri processi progetto AUTSYS",
+    description: "Scopre i processi Windows reali collegati a una cartella/progetto autorizzata, inclusi quelli non avviati o non piu tracciati dal Bridge.",
+    inputSchema: z.object({
+      pathPrefix: z.string().min(1),
+      nameContains: z.string().optional(),
+      maxResults: z.number().int().min(1).max(500).default(200),
+      bridgeId: z.string().optional()
+    }),
+    annotations: ro
+  }, async ({ pathPrefix, nameContains, maxResults, bridgeId }) =>
+    result(await callBridge("process.discover", { pathPrefix, nameContains: nameContains || "", maxResults }, bridgeId || "")));
+
+  mcp.registerTool("pc_process_stop_pid", {
+    title: "Ferma processo progetto AUTSYS per PID",
+    description: "Ferma un processo Windows per PID solo se il Bridge verifica che appartenga alla cartella/progetto autorizzata indicata. Operazione idempotente e confinata allo scope.",
+    inputSchema: z.object({
+      pid: z.number().int().positive(),
+      pathPrefix: z.string().min(1),
+      entireProcessTree: z.boolean().default(true),
+      bridgeId: z.string().optional()
+    }),
+    annotations: wi
+  }, async ({ pid, pathPrefix, entireProcessTree, bridgeId }) =>
+    compactProcessResult(await callBridge("process.stop_pid", { pid, pathPrefix, entireProcessTree }, bridgeId || ""), false, 0));
 
   mcp.registerTool("pc_process_status", {
     title: "Stato processo AUTSYS",
