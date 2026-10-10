@@ -6,11 +6,19 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 
-const VERSION = "0.1.0.11";
+const VERSION = "0.1.0.12";
 const PORT = Number(process.env.PORT || 10000);
 const BRIDGE_TOKEN = process.env.BRIDGE_TOKEN || "";
 const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
-const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 20000);
+const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 30000);
+const LONG_REQUEST_TIMEOUT_MS = Number(process.env.LONG_REQUEST_TIMEOUT_MS || 300000);
+const WRITE_REQUEST_TIMEOUT_MS = Number(process.env.WRITE_REQUEST_TIMEOUT_MS || 60000);
+
+function timeoutForTool(tool) {
+  if (tool === "fs.delete" || tool === "bridge.update.apply" || tool === "pg.roberta.migrate") return LONG_REQUEST_TIMEOUT_MS;
+  if (tool === "pg.roberta.write") return WRITE_REQUEST_TIMEOUT_MS;
+  return REQUEST_TIMEOUT_MS;
+}
 const MAX_JSON_BYTES = Number(process.env.MAX_JSON_BYTES || 48 * 1024 * 1024);
 
 if (!BRIDGE_TOKEN || !CONTROL_TOKEN) {
@@ -102,10 +110,11 @@ async function executeBridge(tool, args = {}, requestedBridgeId = "", requestIdO
   const startedAt = performance.now();
 
   const bridgeResponse = await new Promise((resolve, reject) => {
+    const timeoutMs = timeoutForTool(cleanTool);
     const timeout = setTimeout(() => {
       pending.delete(requestId);
-      reject(new Error(`Bridge timeout after ${REQUEST_TIMEOUT_MS} ms`));
-    }, REQUEST_TIMEOUT_MS);
+      reject(new Error(`Bridge timeout after ${timeoutMs} ms for ${cleanTool}`));
+    }, timeoutMs);
 
     pending.set(requestId, {
       resolve,
