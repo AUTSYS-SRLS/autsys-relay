@@ -640,7 +640,7 @@ function buildMcp() {
       recursive: z.boolean().default(false),
       bridgeId: z.string().optional()
     }),
-    annotations: wi
+    annotations: de
   }, async ({ path, recursive, bridgeId }) => result(await callBridge("fs.delete", { path, recursive }, bridgeId || "")));
 
   mcp.registerTool("pc_fs_delete_async", {
@@ -651,7 +651,7 @@ function buildMcp() {
       recursive: z.boolean().default(false),
       bridgeId: z.string().optional()
     }),
-    annotations: wi
+    annotations: de
   }, async ({ path, recursive, bridgeId }) => {
     const job = startAsyncJob("fs.delete", { path, recursive }, async () =>
       bridgePayload(await callBridge("fs.delete", { path, recursive }, bridgeId || ""), "fs.delete"));
