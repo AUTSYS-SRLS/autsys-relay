@@ -10,6 +10,7 @@ const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
 const PANEL_SESSION_SECRET = process.env.PANEL_SESSION_SECRET || "";
 const SESSION_COOKIE = "autsys_work_session";
 const TARGET_COOKIE = "autsys_bootstrap_target";
+const BOOTSTRAP_DONE_COOKIE = "autsys_bootstrap_done";
 const TARGET_TTL_MS = 12 * 60 * 60 * 1000;
 
 if (!CONTROL_TOKEN || !PANEL_SESSION_SECRET) {
@@ -99,6 +100,22 @@ function requestedTarget(url, req) {
 
 function targetCookie(target) {
   return `${TARGET_COOKIE}=${encodeURIComponent(signTarget(target.scope, target.projectName))}; Path=/work; Max-Age=${Math.floor(TARGET_TTL_MS / 1000)}; HttpOnly; Secure; SameSite=Strict`;
+}
+
+function bootstrapDoneValue(req, target) {
+  const session = parseCookies(req)[SESSION_COOKIE] || "";
+  const material = `${session}\n${target.scope}\n${target.projectName || ""}`;
+  return crypto.createHmac("sha256", PANEL_SESSION_SECRET).update(material).digest("base64url");
+}
+
+function bootstrapAlreadyDone(req, target) {
+  const stored = parseCookies(req)[BOOTSTRAP_DONE_COOKIE];
+  if (!stored || !validSession(req)) return false;
+  return safeEqual(stored, bootstrapDoneValue(req, target));
+}
+
+function bootstrapDoneCookie(req, target) {
+  return `${BOOTSTRAP_DONE_COOKIE}=${encodeURIComponent(bootstrapDoneValue(req, target))}; Path=/work; Max-Age=${Math.floor(TARGET_TTL_MS / 1000)}; HttpOnly; Secure; SameSite=Strict`;
 }
 
 function json(res, status, body) {
@@ -277,7 +294,8 @@ function proxy(req, res, options = {}) {
       const responseHeaders = { ...r.headers };
       if (options.setCookie) {
         const existing = responseHeaders["set-cookie"] || [];
-        responseHeaders["set-cookie"] = [...(Array.isArray(existing) ? existing : [existing].filter(Boolean)), options.setCookie];
+        const added = Array.isArray(options.setCookie) ? options.setCookie : [options.setCookie];
+        responseHeaders["set-cookie"] = [...(Array.isArray(existing) ? existing : [existing].filter(Boolean)), ...added.filter(Boolean)];
       }
       res.writeHead(r.statusCode || 502, responseHeaders);
       r.pipe(res);
@@ -301,7 +319,8 @@ function proxy(req, res, options = {}) {
       delete responseHeaders["content-length"];
       if (options.setCookie) {
         const existing = responseHeaders["set-cookie"] || [];
-        responseHeaders["set-cookie"] = [...(Array.isArray(existing) ? existing : [existing].filter(Boolean)), options.setCookie];
+        const added = Array.isArray(options.setCookie) ? options.setCookie : [options.setCookie];
+        responseHeaders["set-cookie"] = [...(Array.isArray(existing) ? existing : [existing].filter(Boolean)), ...added.filter(Boolean)];
       }
       res.writeHead(r.statusCode || 200, responseHeaders);
       res.end(body);
@@ -355,9 +374,12 @@ const server = http.createServer(async (req, res) => {
     catch (err) { return json(res, 400, { ok: false, error: String(err?.message || err) }); }
     const cookie = targetCookie(target);
     if (!validSession(req)) return proxy(req, res, { setCookie: cookie });
+    if (!target.explicit && bootstrapAlreadyDone(req, target)) {
+      return proxy(req, res, { setCookie: cookie });
+    }
     try {
       const result = await bootstrap(target);
-      return proxy(req, res, { setCookie: cookie, injectHtml: bootstrapCard(result, null) });
+      return proxy(req, res, { setCookie: [cookie, bootstrapDoneCookie(req, target)], injectHtml: bootstrapCard(result, null) });
     } catch (err) {
       return proxy(req, res, { setCookie: cookie, injectHtml: bootstrapCard(null, String(err?.message || err)) });
     }
