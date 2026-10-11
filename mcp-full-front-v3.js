@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 
-const VERSION = "0.1.0.22";
+const VERSION = "0.1.0.23";
 const PORT = Number(process.env.PORT || 10006);
 const BACKEND_PORT = Number(process.env.GATEWAY_INTERNAL_PORT || 10001);
 const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
@@ -763,7 +763,7 @@ function buildMcp() {
     return result(await callBridge("pg.roberta.write", request, bridgeId || ""));
   });
 
-  mcp.registerTool("roberta_migrate", {
+  mcp.registerTool("roberta_schema", {
     title: "Migra schema ROBERTA",
     description: "Migrazione additiva governata dello schema ROBERTA.",
     inputSchema: z.object({
@@ -774,7 +774,7 @@ function buildMcp() {
   }, async ({ migrationId, description, sql, bridgeId }) =>
     result(await callBridge("pg.roberta.migrate", { migrationId, description, sql }, bridgeId || "")));
 
-  mcp.registerTool("project_register", {
+  mcp.registerTool("project_registry", {
     title: "Registra progetto AUTSYS",
     description: "Registra o aggiorna idempotentemente un progetto nel registry ROBERTA.",
     inputSchema: z.object({
