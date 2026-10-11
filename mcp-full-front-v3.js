@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 
-const VERSION = "0.1.0.17";
+const VERSION = "0.1.0.18";
 const PORT = Number(process.env.PORT || 10006);
 const BACKEND_PORT = Number(process.env.GATEWAY_INTERNAL_PORT || 10001);
 const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
@@ -534,7 +534,7 @@ function buildMcp() {
   const mcp = new McpServer(
     { name: "AUTSYS PC BRIDGE", version: VERSION },
     {
-      instructions: "At conversation start, if the chat belongs to a specific project, call session_bootstrap with scope PROJECT and the exact current project name; do not call GENERAL first. If the chat is general, call session_bootstrap with scope GENERAL. Always retain the compact global context, active learning and compact project catalog. In PROJECT scope, load detailed context only for the current project; retrieve other project/domain details on demand. Prefer the narrow typed tools for routine filesystem, process and project-database work. Use pc_execute only as a fallback when no typed capability exists. Do not create/execute helper scripts for routine mkdir, project DB access, hash, move, rename or long recursive delete when the dedicated MCP tool exists."
+      instructions: "At conversation start, if the chat belongs to a specific project, call session_bootstrap with scope PROJECT and the exact current project name; do not call GENERAL first. If the chat is general, call session_bootstrap with scope GENERAL. Bootstrap is ONCE PER CONVERSATION: after a successful bootstrap, NEVER call session_bootstrap again in the same conversation unless the user explicitly asks to reload/re-bootstrap the project or the project itself changes. A routine request to read a file, query a DB, inspect state, run a simulation or continue work is NOT permission to bootstrap again. Always retain the compact global context, active learning and compact project catalog. In PROJECT scope, load detailed context only for the current project; retrieve other project/domain details on demand. Prefer the narrow typed tools for routine filesystem, process and project-database work. Use pc_execute only as a fallback when no typed capability exists. For AUTSYS_PROJECT.sqlite reads use project_db_query/project.db.query natively; never use process.start/project_db_tool.py for project DB reads. Do not create/execute helper scripts for routine mkdir, project DB reads, hash, move, rename or long recursive delete when the dedicated MCP tool exists."
     }
   );
 
@@ -1088,7 +1088,7 @@ function buildMcp() {
 
   mcp.registerTool("session_bootstrap", {
     title: "Bootstrap AUTSYS",
-    description: "Bootstrap ROBERTA v6.1: contesto globale compatto, learning attivi e catalogo sintetico progetti sempre presenti; nelle chat di progetto il dettaglio resta limitato al progetto corrente.",
+    description: "Bootstrap ROBERTA v6.1 da eseguire una sola volta all'avvio della conversazione. Non richiamare nella stessa conversazione dopo un bootstrap riuscito salvo richiesta esplicita dell'utente di ricaricare/re-bootstrap o cambio progetto. Le normali richieste operative non richiedono un nuovo bootstrap.",
     inputSchema: z.object({
       scope: z.enum(["GENERAL", "PROJECT"]),
       projectName: z.string().optional(),
