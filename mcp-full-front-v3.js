@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 
-const VERSION = "0.1.0.20";
+const VERSION = "0.1.0.21";
 const PORT = Number(process.env.PORT || 10006);
 const BACKEND_PORT = Number(process.env.GATEWAY_INTERNAL_PORT || 10001);
 const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
@@ -535,9 +535,343 @@ function buildMcp() {
   const mcp = new McpServer(
     { name: "AUTSYS PC BRIDGE", version: VERSION },
     {
-      instructions: "At conversation start, if the chat belongs to a specific project, call session_bootstrap with scope PROJECT and the exact current project name; do not call GENERAL first. If the chat is general, call session_bootstrap with scope GENERAL. Bootstrap is ONCE PER CONVERSATION: after a successful bootstrap, NEVER call session_bootstrap again in the same conversation unless the user explicitly asks to reload/re-bootstrap the project or the project itself changes. A routine request to read a file, query a DB, inspect state, run a simulation or continue work is NOT permission to bootstrap again. Always retain the compact global context, active learning and compact project catalog. In PROJECT scope, load detailed context only for the current project; retrieve other project/domain details on demand. Prefer the narrow typed tools for routine filesystem, process and project-database work. Use pc_execute only as a fallback when no typed capability exists. For AUTSYS_PROJECT.sqlite reads use project_db_query/project.db.query natively; never use process.start/project_db_tool.py for project DB reads. For any other local SQLite .sqlite/.sqlite3/.db read use the dedicated sqlite_query tool; do not route SQLite reads through pc_execute and do not create helper scripts for them. sqlite_query is strictly read-only (SELECT/PRAGMA) and is the preferred path for collectors and historical databases. For project handoffs ALWAYS use project_handoff_create: handoffs belong in the project local AUTSYS_PROJECT.sqlite, not in ROBERTA, and the tool resolves the project path/public id automatically. Do not use roberta_write or generic project_db_write to create a project handoff when project_handoff_create is available. Do not create/execute helper scripts for routine mkdir, project DB reads, project handoff creation, hash, move, rename or long recursive delete when the dedicated MCP tool exists."
+      instructions: "Use the compact AUTSYS tool surface. At conversation start, if the chat belongs to a specific project, call autsys_bootstrap with scope PROJECT and the exact current project name; do not call GENERAL first. If the chat is general, call autsys_bootstrap with scope GENERAL. Bootstrap is ONCE PER CONVERSATION unless the user explicitly asks to reload/re-bootstrap or the project changes. Local read access is broader than mutation access: filesystem_read and sqlite_read may read any local volume allowed by the Bridge read policy; filesystem_write, filesystem_manage, filesystem_delete and process_control may mutate or execute only inside AUTHORIZED_ROOTS. ROBERTA has no special filesystem privilege. Use sqlite_read for local SQLite collectors/history, project_db_read/project_db_change/project_db_delete for AUTSYS_PROJECT.sqlite, and project_handoff for handoffs. Never reconstruct configuration from event/tick tables when an authoritative registry/configuration source exists. The legacy pc_execute and old individual tools are compatibility fallbacks and should not be used when a compact typed family is available."
     }
   );
+
+
+  // Compact typed surface. Keep these FIRST: ChatGPT may materialize only the first ~24 tools.
+  // Native Bridge capabilities remain registered below for backward compatibility.
+
+  mcp.registerTool("autsys_bootstrap", {
+    title: "Bootstrap AUTSYS",
+    description: "Bootstrap iniziale AUTSYS. In una chat di progetto usare direttamente PROJECT; una sola volta per conversazione salvo richiesta esplicita o cambio progetto.",
+    inputSchema: z.object({ scope: z.enum(["GENERAL","PROJECT"]), projectName: z.string().optional(), bridgeId: z.string().optional() }),
+    annotations: ro
+  }, async ({ scope, projectName, bridgeId }) => {
+    try { return jsonResult(await bootstrap(scope, projectName || "", bridgeId || "")); }
+    catch (e) { return jsonResult({ ok:false, error:String(e?.message || e) }, true); }
+  });
+
+  mcp.registerTool("bridge_health", {
+    title: "Stato AUTSYS PC BRIDGE",
+    description: "Legge stato e versione del Bridge.",
+    inputSchema: z.object({ bridgeId: z.string().optional() }),
+    annotations: ro
+  }, async ({ bridgeId }) => result(await callBridge("health", {}, bridgeId || "")));
+
+  mcp.registerTool("filesystem_read", {
+    title: "Leggi filesystem locale",
+    description: "Famiglia esclusivamente read-only. Legge/naviga/cerca/hash/confronta file e cartelle sui volumi locali consentiti dalla policy di lettura del Bridge.",
+    inputSchema: z.object({
+      operation: z.enum(["list","read_text","find","hash","exists","stat","drives","read_binary","hash_tree","compare","tree","read_lines","search_text"]),
+      arguments: z.record(z.any()).default({}),
+      bridgeId: z.string().optional()
+    }),
+    annotations: ro
+  }, async ({ operation, arguments: args, bridgeId }) =>
+    result(await callBridge("fs." + operation, args || {}, bridgeId || "")));
+
+  mcp.registerTool("filesystem_write", {
+    title: "Scrivi filesystem autorizzato",
+    description: "Crea o modifica file/cartelle SOLO dentro AUTHORIZED_ROOTS. Include mkdir, testo/binario, append, patch, metadata, touch e truncate; restano attivi backup e verifiche native.",
+    inputSchema: z.object({
+      operation: z.enum(["mkdir","write_text","create_text","write_binary","append_text","patch_text","set_metadata","touch","truncate"]),
+      arguments: z.record(z.any()).default({}),
+      bridgeId: z.string().optional()
+    }),
+    annotations: wr
+  }, async ({ operation, arguments: args, bridgeId }) =>
+    result(await callBridge("fs." + operation, args || {}, bridgeId || "")));
+
+  mcp.registerTool("filesystem_manage", {
+    title: "Gestisci filesystem autorizzato",
+    description: "Copia, sostituisce, sposta, rinomina, comprime o estrae. Le destinazioni e ogni sorgente che viene rimossa devono essere dentro AUTHORIZED_ROOTS.",
+    inputSchema: z.object({
+      operation: z.enum(["copy","replace","move_path","rename_path","move","rename","zip","unzip"]),
+      arguments: z.record(z.any()).default({}),
+      bridgeId: z.string().optional()
+    }),
+    annotations: wr
+  }, async ({ operation, arguments: args, bridgeId }) =>
+    result(await callBridge("fs." + operation, args || {}, bridgeId || "")));
+
+  mcp.registerTool("filesystem_delete", {
+    title: "Elimina filesystem autorizzato",
+    description: "Cancella file/cartelle SOLO dentro AUTHORIZED_ROOTS con backup protetto. async=true avvia un job per cancellazioni lunghe.",
+    inputSchema: z.object({
+      path: z.string().min(1),
+      recursive: z.boolean().default(false),
+      async: z.boolean().default(false),
+      bridgeId: z.string().optional()
+    }),
+    annotations: de
+  }, async ({ path, recursive, async: asyncMode, bridgeId }) => {
+    if (!asyncMode) return result(await callBridge("fs.delete", { path, recursive }, bridgeId || ""));
+    const job = startAsyncJob("fs.delete", { path, recursive }, async () =>
+      bridgePayload(await callBridge("fs.delete", { path, recursive }, bridgeId || ""), "fs.delete"));
+    return jsonResult({ ok:true, jobId:job.jobId, status:job.status, startedAt:job.startedAt, path, recursive });
+  });
+
+  mcp.registerTool("process_read", {
+    title: "Leggi processi e job AUTSYS",
+    description: "Legge processi tracciati/reali o lo stato di un job gateway. Non avvia e non termina nulla.",
+    inputSchema: z.object({
+      operation: z.enum(["list","discover","status","job_status"]),
+      arguments: z.record(z.any()).default({}),
+      bridgeId: z.string().optional()
+    }),
+    annotations: ro
+  }, async ({ operation, arguments: args, bridgeId }) => {
+    if (operation === "job_status") {
+      pruneJobs();
+      const jobId = String(args?.jobId || "");
+      const job = asyncJobs.get(jobId);
+      return job ? jsonResult({ ok:true, job }) : jsonResult({ ok:false, error:"JOB_NOT_FOUND" }, true);
+    }
+    return result(await callBridge("process." + operation, args || {}, bridgeId || ""));
+  });
+
+  mcp.registerTool("process_control", {
+    title: "Controlla processi nelle root autorizzate",
+    description: "Avvia script Python/CMD/PowerShell o ferma processi. L'esecuzione e il controllo mutativo sono confinati alle AUTHORIZED_ROOTS.",
+    inputSchema: z.object({
+      operation: z.enum(["start","stop","stop_pid"]),
+      arguments: z.record(z.any()).default({}),
+      bridgeId: z.string().optional()
+    }),
+    annotations: wi
+  }, async ({ operation, arguments: args, bridgeId }) =>
+    result(await callBridge("process." + operation, args || {}, bridgeId || "")));
+
+  mcp.registerTool("sqlite_read", {
+    title: "Leggi SQLite locale",
+    description: "Query SQLite strettamente read-only (SELECT/PRAGMA) su file .sqlite/.sqlite3/.db locali leggibili. Percorso preferito per collettori e storici.",
+    inputSchema: z.object({ path:z.string().min(1), sql:z.string().min(1), maxRows:z.number().int().min(1).max(1000).default(1000), bridgeId:z.string().optional() }),
+    annotations: ro
+  }, async ({ path, sql, maxRows, bridgeId }) =>
+    result(await callBridge("sqlite.query", { path, sql, maxRows }, bridgeId || "")));
+
+  mcp.registerTool("project_db_read", {
+    title: "Leggi DB progetto AUTSYS",
+    description: "SELECT/PRAGMA read-only su AUTSYS_PROJECT.sqlite.",
+    inputSchema: z.object({ path:z.string().min(1), sql:z.string().min(1), maxRows:z.number().int().min(1).max(1000).default(1000), bridgeId:z.string().optional() }),
+    annotations: ro
+  }, async ({ path, sql, maxRows, bridgeId }) =>
+    result(await callBridge("project.db.query", { path, sql, maxRows }, bridgeId || "")));
+
+  mcp.registerTool("project_db_change", {
+    title: "Inserisci o aggiorna DB progetto AUTSYS",
+    description: "Scrittura strutturata INSERT/UPDATE su AUTSYS_PROJECT.sqlite dentro le root autorizzate; nessun SQL libero.",
+    inputSchema: z.object({
+      path:z.string().min(1), table:z.string().min(1), operation:z.enum(["insert","update"]),
+      values:z.record(z.any()).default({}), filters:z.array(z.record(z.any())).default([]),
+      maxAffectedRows:z.number().int().min(1).max(100).default(100), bridgeId:z.string().optional()
+    }),
+    annotations: wr
+  }, async ({ path, table, operation, values, filters, maxAffectedRows, bridgeId }) => {
+    try {
+      return jsonResult(await runProjectDbHelper({ operation:"write", path, table, writeOperation:operation, values, filters, maxAffectedRows }, bridgeId || ""));
+    } catch (e) { return jsonResult({ ok:false, error:String(e?.message || e) }, true); }
+  });
+
+  mcp.registerTool("project_db_delete", {
+    title: "Elimina righe DB progetto AUTSYS",
+    description: "DELETE strutturato e limitato su AUTSYS_PROJECT.sqlite dentro le root autorizzate; nessun SQL libero.",
+    inputSchema: z.object({
+      path:z.string().min(1), table:z.string().min(1), filters:z.array(z.record(z.any())).min(1),
+      maxAffectedRows:z.number().int().min(1).max(100).default(100), bridgeId:z.string().optional()
+    }),
+    annotations: de
+  }, async ({ path, table, filters, maxAffectedRows, bridgeId }) => {
+    try {
+      return jsonResult(await runProjectDbHelper({ operation:"write", path, table, writeOperation:"delete", values:{}, filters, maxAffectedRows }, bridgeId || ""));
+    } catch (e) { return jsonResult({ ok:false, error:String(e?.message || e) }, true); }
+  });
+
+  mcp.registerTool("project_handoff", {
+    title: "Gestisci handoff progetto AUTSYS",
+    description: "Crea handoff nel DB locale del progetto oppure li marca consumed senza cancellarli. Non usa ROBERTA come deposito degli handoff.",
+    inputSchema: z.object({
+      operation:z.enum(["create","consume"]),
+      projectName:z.string().optional(), path:z.string().optional(), ids:z.array(z.number().int().positive()).optional(),
+      sessionKey:z.string().optional(), sessionTitle:z.string().optional(), summary:z.string().optional(),
+      completedWork:z.string().default(""), verifiedState:z.string().default(""), pendingWork:z.string().default(""),
+      operationalNotes:z.string().default(""), externalLinks:z.string().default(""), nextSessionBootstrap:z.string().default(""),
+      sourceReference:z.string().default(""), createdAt:z.string().optional(), sessionDate:z.string().optional(), publicId:z.string().optional(),
+      bridgeId:z.string().optional()
+    }),
+    annotations: wi
+  }, async (x) => {
+    try {
+      if (x.operation === "consume") {
+        if (!x.path || !x.ids?.length) throw new Error("consume richiede path e ids.");
+        return jsonResult(await runProjectDbHelper({ operation:"handoff_consume", path:x.path, ids:x.ids }, x.bridgeId || ""));
+      }
+      if (!x.projectName || !x.sessionKey || !x.sessionTitle || !x.summary) throw new Error("create richiede projectName, sessionKey, sessionTitle e summary.");
+      const key=projectKey(x.projectName);
+      const resolved=await queryRows(
+        `SELECT p.project_key,p.public_id,p.root_path FROM public.autsys_project_registry p
+         WHERE lower(p.display_name)=lower(${sqlLiteral(x.projectName)}) OR p.project_key=${sqlLiteral(key)}
+         ORDER BY p.is_authoritative DESC,p.id LIMIT 1`,
+        x.bridgeId || "", "project handoff project resolve");
+      const row=Array.isArray(resolved?.rows)&&resolved.rows.length?resolved.rows[0]:null;
+      if(!row?.root_path||!row?.public_id) throw new Error("Progetto AUTSYS non trovato o privo di root_path/public_id.");
+      const args={
+        path:winJoin(String(row.root_path),"AUTSYS_PROJECT.sqlite"), projectPublicId:String(row.public_id),
+        sessionKey:x.sessionKey, sessionTitle:x.sessionTitle, summary:x.summary,
+        completedWork:x.completedWork, verifiedState:x.verifiedState, pendingWork:x.pendingWork,
+        operationalNotes:x.operationalNotes, externalLinks:x.externalLinks, nextSessionBootstrap:x.nextSessionBootstrap,
+        sourceReference:x.sourceReference
+      };
+      if(x.createdAt) args.createdAt=x.createdAt;
+      if(x.sessionDate) args.sessionDate=x.sessionDate;
+      if(x.publicId) args.publicId=x.publicId;
+      return result(await callBridge("project.handoff.create", args, x.bridgeId || ""));
+    } catch(e){ return jsonResult({ok:false,error:String(e?.message||e)},true); }
+  });
+
+  mcp.registerTool("roberta_read", {
+    title: "Leggi ROBERTA",
+    description: "Query SQL read-only sul database ROBERTA.",
+    inputSchema: z.object({ sql:z.string().min(1), bridgeId:z.string().optional() }),
+    annotations: ro
+  }, async ({ sql, bridgeId }) => result(await callBridge("pg.roberta.query", { sql }, bridgeId || "")));
+
+  mcp.registerTool("roberta_change", {
+    title: "Inserisci/aggiorna ROBERTA",
+    description: "Scrittura strutturata governata su ROBERTA per operazioni non-delete.",
+    inputSchema: z.object({ request:z.record(z.any()), bridgeId:z.string().optional() }),
+    annotations: wr
+  }, async ({ request, bridgeId }) => {
+    if (String(request?.operation || "").toLowerCase() === "delete")
+      return jsonResult({ok:false,error:"Usare roberta_delete per DELETE."},true);
+    return result(await callBridge("pg.roberta.write", request, bridgeId || ""));
+  });
+
+  mcp.registerTool("roberta_delete", {
+    title: "Elimina righe ROBERTA",
+    description: "DELETE strutturato governato su ROBERTA.",
+    inputSchema: z.object({ request:z.record(z.any()), bridgeId:z.string().optional() }),
+    annotations: de
+  }, async ({ request, bridgeId }) => {
+    if (String(request?.operation || "").toLowerCase() !== "delete")
+      return jsonResult({ok:false,error:"roberta_delete accetta solo operation=delete."},true);
+    return result(await callBridge("pg.roberta.write", request, bridgeId || ""));
+  });
+
+  mcp.registerTool("roberta_migrate_compact", {
+    title: "Migra schema ROBERTA",
+    description: "Migrazione additiva governata dello schema ROBERTA.",
+    inputSchema: z.object({ migrationId:z.string().min(1), description:z.string().min(1), sql:z.string().min(1), bridgeId:z.string().optional() }),
+    annotations: de
+  }, async ({ migrationId, description, sql, bridgeId }) =>
+    result(await callBridge("pg.roberta.migrate", { migrationId, description, sql }, bridgeId || "")));
+
+  mcp.registerTool("project_register_compact", {
+    title: "Registra progetto AUTSYS",
+    description: "Registra o aggiorna idempotentemente un progetto nel registry ROBERTA.",
+    inputSchema: z.object({
+      projectName:z.string().min(1), projectKey:z.string().optional(), entityKind:z.string().min(1),
+      rootPath:z.string().optional(), repositoryUrl:z.string().optional(), repositoryBranch:z.string().optional(),
+      description:z.string().optional(), isAuthoritative:z.boolean().default(true), bridgeId:z.string().optional()
+    }),
+    annotations: wr
+  }, async ({ bridgeId, projectName, ...rest }) =>
+    result(await callBridge("project.register", { displayName:projectName, ...rest }, bridgeId || "")));
+
+  mcp.registerTool("eolo_sql", {
+    title: "SQL EOLO_AI",
+    description: "Esegue la capability SQL governata EOLO_AI del Bridge.",
+    inputSchema: z.object({ arguments:z.record(z.any()).default({}), bridgeId:z.string().optional() }),
+    annotations: wr
+  }, async ({ arguments:args, bridgeId }) =>
+    result(await callBridge("sql.eolo_ai.execute", args || {}, bridgeId || "")));
+
+  mcp.registerTool("service_read", {
+    title: "Leggi servizi AUTSYS",
+    description: "Letture tipizzate dei servizi esterni governati dal Bridge: Stripe e Acube.",
+    inputSchema: z.object({
+      operation:z.enum(["stripe.status","stripe.catalog.snapshot","stripe.checkout.retrieve","acube.status","acube.business_registry.get","acube.recipient_code.find"]),
+      arguments:z.record(z.any()).default({}), bridgeId:z.string().optional()
+    }),
+    annotations: ro
+  }, async ({ operation, arguments:args, bridgeId }) =>
+    result(await callBridge(operation, args || {}, bridgeId || "")));
+
+  mcp.registerTool("service_write", {
+    title: "Modifica servizi AUTSYS",
+    description: "Azioni governate sui servizi esterni AUTSYS, attualmente Stripe.",
+    inputSchema: z.object({
+      operation:z.enum(["stripe.checkout.create_subscription","stripe.account.set_terms_url","stripe.payment_link.create","stripe.price.create_recurring","stripe.price.deactivate","stripe.product.set_default_price"]),
+      arguments:z.record(z.any()).default({}), bridgeId:z.string().optional()
+    }),
+    annotations: wr
+  }, async ({ operation, arguments:args, bridgeId }) =>
+    result(await callBridge(operation, args || {}, bridgeId || "")));
+
+  mcp.registerTool("bridge_update_compact", {
+    title: "Aggiorna AUTSYS PC BRIDGE",
+    description: "Stage o apply governato dell'Updater Bridge con backup, health e rollback.",
+    inputSchema: z.object({ operation:z.enum(["stage","apply"]), request:z.record(z.any()), bridgeId:z.string().optional() }),
+    annotations: de
+  }, async ({ operation, request, bridgeId }) =>
+    result(await callBridge("bridge.update." + operation, request, bridgeId || "")));
+
+  mcp.registerTool("render_ops", {
+    title: "Gestisci Render AUTSYS",
+    description: "Legge servizi/deploy/log o avvia deploy Render tramite il gateway AUTSYS.",
+    inputSchema: z.object({
+      operation:z.enum(["list_services","get_service","list_deploys","get_deploy","trigger_deploy","logs"]),
+      arguments:z.record(z.any()).default({})
+    }),
+    annotations: wr
+  }, async ({ operation, arguments:a }) => {
+    try {
+      if(operation==="list_services"){
+        const q=new URLSearchParams(); q.set("limit",String(a.limit||20)); if(a.name) q.append("name",String(a.name));
+        return renderResult(await callRender("/services?"+q.toString()));
+      }
+      if(operation==="get_service") return renderResult(await callRender("/services/"+encodeURIComponent(String(a.serviceId||""))));
+      if(operation==="list_deploys"){
+        const q=new URLSearchParams({limit:String(a.limit||20)});
+        return renderResult(await callRender("/services/"+encodeURIComponent(String(a.serviceId||""))+"/deploys?"+q.toString()));
+      }
+      if(operation==="get_deploy") return renderResult(await callRender("/services/"+encodeURIComponent(String(a.serviceId||""))+"/deploys/"+encodeURIComponent(String(a.deployId||""))));
+      if(operation==="trigger_deploy"){
+        const body={clearCache:a.clearCache?"clear":"do_not_clear"}; if(a.commitId) body.commitId=a.commitId;
+        return renderResult(await callRender("/services/"+encodeURIComponent(String(a.serviceId||""))+"/deploys",{method:"POST",body,timeoutMs:60000}));
+      }
+      const q=new URLSearchParams(); q.set("ownerId",String(a.ownerId||"")); q.set("direction",String(a.direction||"backward")); q.set("limit",String(a.limit||50));
+      if(a.startTime) q.set("startTime",String(a.startTime)); if(a.endTime) q.set("endTime",String(a.endTime));
+      for(const id of (a.resourceIds||[])) q.append("resource",String(id));
+      for(const t of (a.text||[])) q.append("text",String(t));
+      for(const t of (a.type||[])) q.append("type",String(t));
+      return renderResult(await callRender("/logs?"+q.toString(),{timeoutMs:60000}));
+    } catch(e){ return jsonResult({ok:false,provider:"Render",error:String(e?.message||e)},true); }
+  });
+
+  mcp.registerTool("pc_file_stage_compact", {
+    title: "Trasferisci file ChatGPT al PC",
+    description: "Trasferisce un file allegato/autorizzato da ChatGPT nello staging Bridge con verifica SHA-256.",
+    inputSchema: z.object({
+      file:z.object({download_url:z.string().url(),file_id:z.string().min(1),mime_type:z.string().optional(),file_name:z.string().optional()}),
+      updateId:z.string().min(8).max(100).optional(), relativePath:z.string().min(1).optional(), bridgeId:z.string().optional()
+    }),
+    annotations: wr,
+    _meta: { "openai/fileParams": ["file"] }
+  }, async ({ file, updateId, relativePath, bridgeId }) => {
+    try {
+      const response=await fetch(file.download_url,{signal:AbortSignal.timeout(120000)});
+      if(!response.ok) throw new Error("Download file ChatGPT fallito: HTTP "+response.status);
+      const bytes=Buffer.from(await response.arrayBuffer());
+      if(bytes.length>32*1024*1024) throw new Error("File oltre il limite di 32 MiB del Bridge.");
+      const sha256=crypto.createHash("sha256").update(bytes).digest("hex");
+      const id=updateId||("chat_"+Date.now()+"_"+crypto.randomBytes(4).toString("hex"));
+      const rel=relativePath||file.file_name||(file.file_id+".bin");
+      return result(await callBridge("bridge.update.stage",{updateId:id,relativePath:rel,sha256,contentBase64:bytes.toString("base64")},bridgeId||""));
+    } catch(e){ return jsonResult({ok:false,error:String(e?.message||e)},true); }
+  });
 
   mcp.registerTool("pc_execute", {
     title: "Esegui capability AUTSYS PC BRIDGE",
