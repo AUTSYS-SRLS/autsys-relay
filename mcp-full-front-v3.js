@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 
-const VERSION = "0.1.0.18";
+const VERSION = "0.1.0.19";
 const PORT = Number(process.env.PORT || 10006);
 const BACKEND_PORT = Number(process.env.GATEWAY_INTERNAL_PORT || 10001);
 const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
@@ -534,7 +534,7 @@ function buildMcp() {
   const mcp = new McpServer(
     { name: "AUTSYS PC BRIDGE", version: VERSION },
     {
-      instructions: "At conversation start, if the chat belongs to a specific project, call session_bootstrap with scope PROJECT and the exact current project name; do not call GENERAL first. If the chat is general, call session_bootstrap with scope GENERAL. Bootstrap is ONCE PER CONVERSATION: after a successful bootstrap, NEVER call session_bootstrap again in the same conversation unless the user explicitly asks to reload/re-bootstrap the project or the project itself changes. A routine request to read a file, query a DB, inspect state, run a simulation or continue work is NOT permission to bootstrap again. Always retain the compact global context, active learning and compact project catalog. In PROJECT scope, load detailed context only for the current project; retrieve other project/domain details on demand. Prefer the narrow typed tools for routine filesystem, process and project-database work. Use pc_execute only as a fallback when no typed capability exists. For AUTSYS_PROJECT.sqlite reads use project_db_query/project.db.query natively; never use process.start/project_db_tool.py for project DB reads. Do not create/execute helper scripts for routine mkdir, project DB reads, hash, move, rename or long recursive delete when the dedicated MCP tool exists."
+      instructions: "At conversation start, if the chat belongs to a specific project, call session_bootstrap with scope PROJECT and the exact current project name; do not call GENERAL first. If the chat is general, call session_bootstrap with scope GENERAL. Bootstrap is ONCE PER CONVERSATION: after a successful bootstrap, NEVER call session_bootstrap again in the same conversation unless the user explicitly asks to reload/re-bootstrap the project or the project itself changes. A routine request to read a file, query a DB, inspect state, run a simulation or continue work is NOT permission to bootstrap again. Always retain the compact global context, active learning and compact project catalog. In PROJECT scope, load detailed context only for the current project; retrieve other project/domain details on demand. Prefer the narrow typed tools for routine filesystem, process and project-database work. Use pc_execute only as a fallback when no typed capability exists. For AUTSYS_PROJECT.sqlite reads use project_db_query/project.db.query natively; never use process.start/project_db_tool.py for project DB reads. For project handoffs ALWAYS use project_handoff_create: handoffs belong in the project local AUTSYS_PROJECT.sqlite, not in ROBERTA, and the tool resolves the project path/public id automatically. Do not use roberta_write or generic project_db_write to create a project handoff when project_handoff_create is available. Do not create/execute helper scripts for routine mkdir, project DB reads, project handoff creation, hash, move, rename or long recursive delete when the dedicated MCP tool exists."
     }
   );
 
@@ -1015,6 +1015,70 @@ function buildMcp() {
     annotations: ro
   }, async ({ path, sql, maxRows, bridgeId }) =>
     result(await callBridge("project.db.query", { path, sql, maxRows }, bridgeId || "")));
+
+  mcp.registerTool("project_handoff_create", {
+    title: "Crea handoff locale progetto AUTSYS",
+    description: "Crea l'handoff nel database locale AUTSYS_PROJECT.sqlite del progetto indicato. Risolve automaticamente root_path e project_public_id da ROBERTA; non salva l'handoff in ROBERTA, non richiede schema o path ed e idempotente su sessionKey.",
+    inputSchema: z.object({
+      projectName: z.string().min(1),
+      sessionKey: z.string().min(1),
+      sessionTitle: z.string().min(1),
+      summary: z.string().min(1),
+      completedWork: z.string().default(""),
+      verifiedState: z.string().default(""),
+      pendingWork: z.string().default(""),
+      operationalNotes: z.string().default(""),
+      externalLinks: z.string().default(""),
+      nextSessionBootstrap: z.string().default(""),
+      sourceReference: z.string().default(""),
+      createdAt: z.string().optional(),
+      sessionDate: z.string().optional(),
+      publicId: z.string().optional(),
+      bridgeId: z.string().optional()
+    }),
+    annotations: wi
+  }, async ({
+    projectName, sessionKey, sessionTitle, summary, completedWork, verifiedState,
+    pendingWork, operationalNotes, externalLinks, nextSessionBootstrap,
+    sourceReference, createdAt, sessionDate, publicId, bridgeId
+  }) => {
+    try {
+      const key = projectKey(projectName);
+      const resolved = await queryRows(
+        `SELECT p.project_key,p.public_id,p.root_path
+         FROM public.autsys_project_registry p
+         WHERE lower(p.display_name)=lower(${sqlLiteral(projectName)})
+            OR p.project_key=${sqlLiteral(key)}
+         ORDER BY p.is_authoritative DESC,p.id
+         LIMIT 1`,
+        bridgeId || "",
+        "project handoff project resolve"
+      );
+      const row = Array.isArray(resolved?.rows) && resolved.rows.length ? resolved.rows[0] : null;
+      if (!row?.root_path || !row?.public_id) throw new Error("Progetto AUTSYS non trovato o privo di root_path/public_id.");
+      const path = winJoin(String(row.root_path), "AUTSYS_PROJECT.sqlite");
+      const args = {
+        path,
+        projectPublicId: String(row.public_id),
+        sessionKey,
+        sessionTitle,
+        summary,
+        completedWork,
+        verifiedState,
+        pendingWork,
+        operationalNotes,
+        externalLinks,
+        nextSessionBootstrap,
+        sourceReference
+      };
+      if (createdAt) args.createdAt = createdAt;
+      if (sessionDate) args.sessionDate = sessionDate;
+      if (publicId) args.publicId = publicId;
+      return result(await callBridge("project.handoff.create", args, bridgeId || ""));
+    } catch (e) {
+      return jsonResult({ ok: false, error: String(e?.message || e) }, true);
+    }
+  });
 
   mcp.registerTool("project_db_write", {
     title: "Scrivi database locale progetto AUTSYS",
