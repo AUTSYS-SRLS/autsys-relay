@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 
-const VERSION = "0.1.0.19";
+const VERSION = "0.1.0.20";
 const PORT = Number(process.env.PORT || 10006);
 const BACKEND_PORT = Number(process.env.GATEWAY_INTERNAL_PORT || 10001);
 const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
@@ -17,6 +17,7 @@ app.use(express.json({ limit: "40mb" }));
 
 function timeoutFor(tool) {
   if (["pg.roberta.migrate","bridge.update.apply","fs.delete","fs.copy","fs.replace","fs.move_path","fs.hash_tree","fs.compare","fs.tree","fs.search_text","fs.zip","fs.unzip"].includes(tool)) return 300000;
+  if (tool === "sqlite.query") return 120000;
   if (tool === "pg.roberta.write") return 60000;
   return 30000;
 }
@@ -534,7 +535,7 @@ function buildMcp() {
   const mcp = new McpServer(
     { name: "AUTSYS PC BRIDGE", version: VERSION },
     {
-      instructions: "At conversation start, if the chat belongs to a specific project, call session_bootstrap with scope PROJECT and the exact current project name; do not call GENERAL first. If the chat is general, call session_bootstrap with scope GENERAL. Bootstrap is ONCE PER CONVERSATION: after a successful bootstrap, NEVER call session_bootstrap again in the same conversation unless the user explicitly asks to reload/re-bootstrap the project or the project itself changes. A routine request to read a file, query a DB, inspect state, run a simulation or continue work is NOT permission to bootstrap again. Always retain the compact global context, active learning and compact project catalog. In PROJECT scope, load detailed context only for the current project; retrieve other project/domain details on demand. Prefer the narrow typed tools for routine filesystem, process and project-database work. Use pc_execute only as a fallback when no typed capability exists. For AUTSYS_PROJECT.sqlite reads use project_db_query/project.db.query natively; never use process.start/project_db_tool.py for project DB reads. For project handoffs ALWAYS use project_handoff_create: handoffs belong in the project local AUTSYS_PROJECT.sqlite, not in ROBERTA, and the tool resolves the project path/public id automatically. Do not use roberta_write or generic project_db_write to create a project handoff when project_handoff_create is available. Do not create/execute helper scripts for routine mkdir, project DB reads, project handoff creation, hash, move, rename or long recursive delete when the dedicated MCP tool exists."
+      instructions: "At conversation start, if the chat belongs to a specific project, call session_bootstrap with scope PROJECT and the exact current project name; do not call GENERAL first. If the chat is general, call session_bootstrap with scope GENERAL. Bootstrap is ONCE PER CONVERSATION: after a successful bootstrap, NEVER call session_bootstrap again in the same conversation unless the user explicitly asks to reload/re-bootstrap the project or the project itself changes. A routine request to read a file, query a DB, inspect state, run a simulation or continue work is NOT permission to bootstrap again. Always retain the compact global context, active learning and compact project catalog. In PROJECT scope, load detailed context only for the current project; retrieve other project/domain details on demand. Prefer the narrow typed tools for routine filesystem, process and project-database work. Use pc_execute only as a fallback when no typed capability exists. For AUTSYS_PROJECT.sqlite reads use project_db_query/project.db.query natively; never use process.start/project_db_tool.py for project DB reads. For any other local SQLite .sqlite/.sqlite3/.db read use the dedicated sqlite_query tool; do not route SQLite reads through pc_execute and do not create helper scripts for them. sqlite_query is strictly read-only (SELECT/PRAGMA) and is the preferred path for collectors and historical databases. For project handoffs ALWAYS use project_handoff_create: handoffs belong in the project local AUTSYS_PROJECT.sqlite, not in ROBERTA, and the tool resolves the project path/public id automatically. Do not use roberta_write or generic project_db_write to create a project handoff when project_handoff_create is available. Do not create/execute helper scripts for routine mkdir, project DB reads, project handoff creation, hash, move, rename or long recursive delete when the dedicated MCP tool exists."
     }
   );
 
@@ -1015,6 +1016,19 @@ function buildMcp() {
     annotations: ro
   }, async ({ path, sql, maxRows, bridgeId }) =>
     result(await callBridge("project.db.query", { path, sql, maxRows }, bridgeId || "")));
+
+  mcp.registerTool("sqlite_query", {
+    title: "Leggi database SQLite locale AUTSYS",
+    description: "Esegue una singola query SQLite strettamente read-only (solo SELECT/PRAGMA) su un file locale .sqlite/.sqlite3/.db autorizzato. Non usa pc_execute, helper Python o process.start ed e il percorso preferito per collettori e archivi storici.",
+    inputSchema: z.object({
+      path: z.string().min(1),
+      sql: z.string().min(1),
+      maxRows: z.number().int().min(1).max(1000).default(1000),
+      bridgeId: z.string().optional()
+    }),
+    annotations: ro
+  }, async ({ path, sql, maxRows, bridgeId }) =>
+    result(await callBridge("sqlite.query", { path, sql, maxRows }, bridgeId || "")));
 
   mcp.registerTool("project_handoff_create", {
     title: "Crea handoff locale progetto AUTSYS",
