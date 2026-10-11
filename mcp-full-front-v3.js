@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 
-const VERSION = "0.1.0.21";
+const VERSION = "0.1.0.22";
 const PORT = Number(process.env.PORT || 10006);
 const BACKEND_PORT = Number(process.env.GATEWAY_INTERNAL_PORT || 10001);
 const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
@@ -541,7 +541,7 @@ function buildMcp() {
 
 
   // Compact typed surface. Keep these FIRST: ChatGPT may materialize only the first ~24 tools.
-  // Native Bridge capabilities remain registered below for backward compatibility.
+  // The native/legacy tools remain registered below for backward compatibility.
 
   mcp.registerTool("autsys_bootstrap", {
     title: "Bootstrap AUTSYS",
@@ -550,19 +550,19 @@ function buildMcp() {
     annotations: ro
   }, async ({ scope, projectName, bridgeId }) => {
     try { return jsonResult(await bootstrap(scope, projectName || "", bridgeId || "")); }
-    catch (e) { return jsonResult({ ok:false, error:String(e?.message || e) }, true); }
+    catch (err) { return jsonResult({ ok:false, error:String(err?.message || err) }, true); }
   });
 
   mcp.registerTool("bridge_health", {
     title: "Stato AUTSYS PC BRIDGE",
-    description: "Legge stato e versione del Bridge.",
+    description: "Legge stato, versione e identita del Bridge.",
     inputSchema: z.object({ bridgeId: z.string().optional() }),
     annotations: ro
   }, async ({ bridgeId }) => result(await callBridge("health", {}, bridgeId || "")));
 
   mcp.registerTool("filesystem_read", {
-    title: "Leggi filesystem locale",
-    description: "Famiglia esclusivamente read-only. Legge/naviga/cerca/hash/confronta file e cartelle sui volumi locali consentiti dalla policy di lettura del Bridge.",
+    title: "Leggi filesystem",
+    description: "Famiglia esclusivamente read-only. Legge, naviga, cerca, confronta e calcola hash su qualunque percorso che Windows renda leggibile al Bridge.",
     inputSchema: z.object({
       operation: z.enum(["list","read_text","find","hash","exists","stat","drives","read_binary","hash_tree","compare","tree","read_lines","search_text"]),
       arguments: z.record(z.any()).default({}),
@@ -574,7 +574,7 @@ function buildMcp() {
 
   mcp.registerTool("filesystem_write", {
     title: "Scrivi filesystem autorizzato",
-    description: "Crea o modifica file/cartelle SOLO dentro AUTHORIZED_ROOTS. Include mkdir, testo/binario, append, patch, metadata, touch e truncate; restano attivi backup e verifiche native.",
+    description: "Crea o modifica file/cartelle SOLO dentro AUTHORIZED_ROOTS. Include mkdir, testo/binario, append, patch, metadata, touch e truncate. Backup e verifiche restano attivi.",
     inputSchema: z.object({
       operation: z.enum(["mkdir","write_text","create_text","write_binary","append_text","patch_text","set_metadata","touch","truncate"]),
       arguments: z.record(z.any()).default({}),
@@ -633,8 +633,8 @@ function buildMcp() {
   });
 
   mcp.registerTool("process_control", {
-    title: "Controlla processi nelle root autorizzate",
-    description: "Avvia script Python/CMD/PowerShell o ferma processi. L'esecuzione e il controllo mutativo sono confinati alle AUTHORIZED_ROOTS.",
+    title: "Controlla processi autorizzati",
+    description: "Avvia script Python/CMD/PowerShell o ferma processi. Le azioni mutative sono confinate alle AUTHORIZED_ROOTS.",
     inputSchema: z.object({
       operation: z.enum(["start","stop","stop_pid"]),
       arguments: z.record(z.any()).default({}),
@@ -645,53 +645,50 @@ function buildMcp() {
     result(await callBridge("process." + operation, args || {}, bridgeId || "")));
 
   mcp.registerTool("sqlite_read", {
-    title: "Leggi SQLite locale",
-    description: "Query SQLite strettamente read-only (SELECT/PRAGMA) su file .sqlite/.sqlite3/.db locali leggibili. Percorso preferito per collettori e storici.",
-    inputSchema: z.object({ path:z.string().min(1), sql:z.string().min(1), maxRows:z.number().int().min(1).max(1000).default(1000), bridgeId:z.string().optional() }),
+    title: "Leggi SQLite",
+    description: "Query SQLite strettamente read-only (SELECT/PRAGMA) su file .sqlite/.sqlite3/.db leggibili. Percorso preferito per collettori, storici e DB progetto.",
+    inputSchema: z.object({
+      path:z.string().min(1), sql:z.string().min(1),
+      maxRows:z.number().int().min(1).max(1000).default(1000),
+      bridgeId:z.string().optional()
+    }),
     annotations: ro
   }, async ({ path, sql, maxRows, bridgeId }) =>
     result(await callBridge("sqlite.query", { path, sql, maxRows }, bridgeId || "")));
 
-  mcp.registerTool("project_db_read", {
-    title: "Leggi DB progetto AUTSYS",
-    description: "SELECT/PRAGMA read-only su AUTSYS_PROJECT.sqlite.",
-    inputSchema: z.object({ path:z.string().min(1), sql:z.string().min(1), maxRows:z.number().int().min(1).max(1000).default(1000), bridgeId:z.string().optional() }),
-    annotations: ro
-  }, async ({ path, sql, maxRows, bridgeId }) =>
-    result(await callBridge("project.db.query", { path, sql, maxRows }, bridgeId || "")));
-
-  mcp.registerTool("project_db_change", {
-    title: "Inserisci o aggiorna DB progetto AUTSYS",
-    description: "Scrittura strutturata INSERT/UPDATE su AUTSYS_PROJECT.sqlite dentro le root autorizzate; nessun SQL libero.",
+  mcp.registerTool("sqlite_change", {
+    title: "Modifica o crea SQLite autorizzato",
+    description: "Esegue DDL/DML non classificato come distruttivo su SQLite dentro AUTHORIZED_ROOTS; puo creare nuovi DB. Per DELETE/DROP usare sqlite_delete.",
     inputSchema: z.object({
-      path:z.string().min(1), table:z.string().min(1), operation:z.enum(["insert","update"]),
-      values:z.record(z.any()).default({}), filters:z.array(z.record(z.any())).default([]),
-      maxAffectedRows:z.number().int().min(1).max(100).default(100), bridgeId:z.string().optional()
+      path:z.string().min(1), sql:z.string().min(1),
+      createIfMissing:z.boolean().default(false), createDirectories:z.boolean().default(false),
+      bridgeId:z.string().optional()
     }),
     annotations: wr
-  }, async ({ path, table, operation, values, filters, maxAffectedRows, bridgeId }) => {
-    try {
-      return jsonResult(await runProjectDbHelper({ operation:"write", path, table, writeOperation:operation, values, filters, maxAffectedRows }, bridgeId || ""));
-    } catch (e) { return jsonResult({ ok:false, error:String(e?.message || e) }, true); }
+  }, async ({ path, sql, createIfMissing, createDirectories, bridgeId }) => {
+    if (/\b(DELETE|DROP)\b/i.test(sql))
+      return jsonResult({ok:false,error:"Usare sqlite_delete per SQL contenente DELETE o DROP."},true);
+    return result(await callBridge("sqlite.execute", { path, sql, createIfMissing, createDirectories }, bridgeId || ""));
   });
 
-  mcp.registerTool("project_db_delete", {
-    title: "Elimina righe DB progetto AUTSYS",
-    description: "DELETE strutturato e limitato su AUTSYS_PROJECT.sqlite dentro le root autorizzate; nessun SQL libero.",
+  mcp.registerTool("sqlite_delete", {
+    title: "Elimina dati o schema SQLite autorizzato",
+    description: "Esegue SQL distruttivo DELETE/DROP su SQLite dentro AUTHORIZED_ROOTS con backup nativo.",
     inputSchema: z.object({
-      path:z.string().min(1), table:z.string().min(1), filters:z.array(z.record(z.any())).min(1),
-      maxAffectedRows:z.number().int().min(1).max(100).default(100), bridgeId:z.string().optional()
+      path:z.string().min(1), sql:z.string().min(1),
+      createIfMissing:z.boolean().default(false), createDirectories:z.boolean().default(false),
+      bridgeId:z.string().optional()
     }),
     annotations: de
-  }, async ({ path, table, filters, maxAffectedRows, bridgeId }) => {
-    try {
-      return jsonResult(await runProjectDbHelper({ operation:"write", path, table, writeOperation:"delete", values:{}, filters, maxAffectedRows }, bridgeId || ""));
-    } catch (e) { return jsonResult({ ok:false, error:String(e?.message || e) }, true); }
+  }, async ({ path, sql, createIfMissing, createDirectories, bridgeId }) => {
+    if (!/\b(DELETE|DROP)\b/i.test(sql))
+      return jsonResult({ok:false,error:"sqlite_delete richiede SQL contenente DELETE o DROP."},true);
+    return result(await callBridge("sqlite.execute", { path, sql, createIfMissing, createDirectories }, bridgeId || ""));
   });
 
   mcp.registerTool("project_handoff", {
     title: "Gestisci handoff progetto AUTSYS",
-    description: "Crea handoff nel DB locale del progetto oppure li marca consumed senza cancellarli. Non usa ROBERTA come deposito degli handoff.",
+    description: "Crea handoff nel DB locale del progetto oppure li marca consumed senza cancellarli. Create e consume sono nativi nel Bridge; ROBERTA non e il deposito degli handoff.",
     inputSchema: z.object({
       operation:z.enum(["create","consume"]),
       projectName:z.string().optional(), path:z.string().optional(), ids:z.array(z.number().int().positive()).optional(),
@@ -706,9 +703,10 @@ function buildMcp() {
     try {
       if (x.operation === "consume") {
         if (!x.path || !x.ids?.length) throw new Error("consume richiede path e ids.");
-        return jsonResult(await runProjectDbHelper({ operation:"handoff_consume", path:x.path, ids:x.ids }, x.bridgeId || ""));
+        return result(await callBridge("project.handoff.consume", { path:x.path, ids:x.ids }, x.bridgeId || ""));
       }
-      if (!x.projectName || !x.sessionKey || !x.sessionTitle || !x.summary) throw new Error("create richiede projectName, sessionKey, sessionTitle e summary.");
+      if (!x.projectName || !x.sessionKey || !x.sessionTitle || !x.summary)
+        throw new Error("create richiede projectName, sessionKey, sessionTitle e summary.");
       const key=projectKey(x.projectName);
       const resolved=await queryRows(
         `SELECT p.project_key,p.public_id,p.root_path FROM public.autsys_project_registry p
@@ -721,14 +719,14 @@ function buildMcp() {
         path:winJoin(String(row.root_path),"AUTSYS_PROJECT.sqlite"), projectPublicId:String(row.public_id),
         sessionKey:x.sessionKey, sessionTitle:x.sessionTitle, summary:x.summary,
         completedWork:x.completedWork, verifiedState:x.verifiedState, pendingWork:x.pendingWork,
-        operationalNotes:x.operationalNotes, externalLinks:x.externalLinks, nextSessionBootstrap:x.nextSessionBootstrap,
-        sourceReference:x.sourceReference
+        operationalNotes:x.operationalNotes, externalLinks:x.externalLinks,
+        nextSessionBootstrap:x.nextSessionBootstrap, sourceReference:x.sourceReference
       };
       if(x.createdAt) args.createdAt=x.createdAt;
       if(x.sessionDate) args.sessionDate=x.sessionDate;
       if(x.publicId) args.publicId=x.publicId;
       return result(await callBridge("project.handoff.create", args, x.bridgeId || ""));
-    } catch(e){ return jsonResult({ok:false,error:String(e?.message||e)},true); }
+    } catch(err){ return jsonResult({ok:false,error:String(err?.message||err)},true); }
   });
 
   mcp.registerTool("roberta_read", {
@@ -739,12 +737,17 @@ function buildMcp() {
   }, async ({ sql, bridgeId }) => result(await callBridge("pg.roberta.query", { sql }, bridgeId || "")));
 
   mcp.registerTool("roberta_change", {
-    title: "Inserisci/aggiorna ROBERTA",
-    description: "Scrittura strutturata governata su ROBERTA per operazioni non-delete.",
-    inputSchema: z.object({ request:z.record(z.any()), bridgeId:z.string().optional() }),
+    title: "Modifica ROBERTA",
+    description: "Scrittura strutturata non-delete su ROBERTA oppure consume handoff centrale legacy.",
+    inputSchema: z.object({
+      operation:z.enum(["write","handoff_consume"]).default("write"),
+      request:z.record(z.any()), bridgeId:z.string().optional()
+    }),
     annotations: wr
-  }, async ({ request, bridgeId }) => {
-    if (String(request?.operation || "").toLowerCase() === "delete")
+  }, async ({ operation, request, bridgeId }) => {
+    if(operation==="handoff_consume")
+      return result(await callBridge("session.handoff.consume", request, bridgeId || ""));
+    if(String(request?.operation||"").toLowerCase()==="delete")
       return jsonResult({ok:false,error:"Usare roberta_delete per DELETE."},true);
     return result(await callBridge("pg.roberta.write", request, bridgeId || ""));
   });
@@ -755,20 +758,23 @@ function buildMcp() {
     inputSchema: z.object({ request:z.record(z.any()), bridgeId:z.string().optional() }),
     annotations: de
   }, async ({ request, bridgeId }) => {
-    if (String(request?.operation || "").toLowerCase() !== "delete")
+    if(String(request?.operation||"").toLowerCase()!=="delete")
       return jsonResult({ok:false,error:"roberta_delete accetta solo operation=delete."},true);
     return result(await callBridge("pg.roberta.write", request, bridgeId || ""));
   });
 
-  mcp.registerTool("roberta_migrate_compact", {
+  mcp.registerTool("roberta_migrate", {
     title: "Migra schema ROBERTA",
     description: "Migrazione additiva governata dello schema ROBERTA.",
-    inputSchema: z.object({ migrationId:z.string().min(1), description:z.string().min(1), sql:z.string().min(1), bridgeId:z.string().optional() }),
+    inputSchema: z.object({
+      migrationId:z.string().min(1), description:z.string().min(1),
+      sql:z.string().min(1), bridgeId:z.string().optional()
+    }),
     annotations: de
   }, async ({ migrationId, description, sql, bridgeId }) =>
     result(await callBridge("pg.roberta.migrate", { migrationId, description, sql }, bridgeId || "")));
 
-  mcp.registerTool("project_register_compact", {
+  mcp.registerTool("project_register", {
     title: "Registra progetto AUTSYS",
     description: "Registra o aggiorna idempotentemente un progetto nel registry ROBERTA.",
     inputSchema: z.object({
@@ -810,48 +816,62 @@ function buildMcp() {
   }, async ({ operation, arguments:args, bridgeId }) =>
     result(await callBridge(operation, args || {}, bridgeId || "")));
 
-  mcp.registerTool("bridge_update_compact", {
+  mcp.registerTool("bridge_update", {
     title: "Aggiorna AUTSYS PC BRIDGE",
     description: "Stage o apply governato dell'Updater Bridge con backup, health e rollback.",
-    inputSchema: z.object({ operation:z.enum(["stage","apply"]), request:z.record(z.any()), bridgeId:z.string().optional() }),
+    inputSchema: z.object({
+      operation:z.enum(["stage","apply"]), request:z.record(z.any()), bridgeId:z.string().optional()
+    }),
     annotations: de
   }, async ({ operation, request, bridgeId }) =>
     result(await callBridge("bridge.update." + operation, request, bridgeId || "")));
 
-  mcp.registerTool("render_ops", {
-    title: "Gestisci Render AUTSYS",
-    description: "Legge servizi/deploy/log o avvia deploy Render tramite il gateway AUTSYS.",
+  mcp.registerTool("render_read", {
+    title: "Leggi Render AUTSYS",
+    description: "Legge servizi, deploy e log Render senza avviare deploy.",
     inputSchema: z.object({
-      operation:z.enum(["list_services","get_service","list_deploys","get_deploy","trigger_deploy","logs"]),
+      operation:z.enum(["list_services","get_service","list_deploys","get_deploy","logs"]),
       arguments:z.record(z.any()).default({})
     }),
-    annotations: wr
+    annotations: ro
   }, async ({ operation, arguments:a }) => {
     try {
       if(operation==="list_services"){
         const q=new URLSearchParams(); q.set("limit",String(a.limit||20)); if(a.name) q.append("name",String(a.name));
         return renderResult(await callRender("/services?"+q.toString()));
       }
-      if(operation==="get_service") return renderResult(await callRender("/services/"+encodeURIComponent(String(a.serviceId||""))));
+      if(operation==="get_service")
+        return renderResult(await callRender("/services/"+encodeURIComponent(String(a.serviceId||""))));
       if(operation==="list_deploys"){
         const q=new URLSearchParams({limit:String(a.limit||20)});
         return renderResult(await callRender("/services/"+encodeURIComponent(String(a.serviceId||""))+"/deploys?"+q.toString()));
       }
-      if(operation==="get_deploy") return renderResult(await callRender("/services/"+encodeURIComponent(String(a.serviceId||""))+"/deploys/"+encodeURIComponent(String(a.deployId||""))));
-      if(operation==="trigger_deploy"){
-        const body={clearCache:a.clearCache?"clear":"do_not_clear"}; if(a.commitId) body.commitId=a.commitId;
-        return renderResult(await callRender("/services/"+encodeURIComponent(String(a.serviceId||""))+"/deploys",{method:"POST",body,timeoutMs:60000}));
-      }
+      if(operation==="get_deploy")
+        return renderResult(await callRender("/services/"+encodeURIComponent(String(a.serviceId||""))+"/deploys/"+encodeURIComponent(String(a.deployId||""))));
       const q=new URLSearchParams(); q.set("ownerId",String(a.ownerId||"")); q.set("direction",String(a.direction||"backward")); q.set("limit",String(a.limit||50));
       if(a.startTime) q.set("startTime",String(a.startTime)); if(a.endTime) q.set("endTime",String(a.endTime));
       for(const id of (a.resourceIds||[])) q.append("resource",String(id));
       for(const t of (a.text||[])) q.append("text",String(t));
       for(const t of (a.type||[])) q.append("type",String(t));
       return renderResult(await callRender("/logs?"+q.toString(),{timeoutMs:60000}));
-    } catch(e){ return jsonResult({ok:false,provider:"Render",error:String(e?.message||e)},true); }
+    } catch(err){ return jsonResult({ok:false,provider:"Render",error:String(err?.message||err)},true); }
   });
 
-  mcp.registerTool("pc_file_stage_compact", {
+  mcp.registerTool("render_deploy", {
+    title: "Avvia deploy Render AUTSYS",
+    description: "Avvia un deploy Render governato.",
+    inputSchema: z.object({
+      serviceId:z.string().min(1), clearCache:z.boolean().default(false), commitId:z.string().optional()
+    }),
+    annotations: de
+  }, async ({ serviceId, clearCache, commitId }) => {
+    try {
+      const body={clearCache:clearCache?"clear":"do_not_clear"}; if(commitId) body.commitId=commitId;
+      return renderResult(await callRender("/services/"+encodeURIComponent(serviceId)+"/deploys",{method:"POST",body,timeoutMs:60000}));
+    } catch(err){ return jsonResult({ok:false,provider:"Render",error:String(err?.message||err)},true); }
+  });
+
+  mcp.registerTool("pc_file_stage", {
     title: "Trasferisci file ChatGPT al PC",
     description: "Trasferisce un file allegato/autorizzato da ChatGPT nello staging Bridge con verifica SHA-256.",
     inputSchema: z.object({
@@ -870,7 +890,7 @@ function buildMcp() {
       const id=updateId||("chat_"+Date.now()+"_"+crypto.randomBytes(4).toString("hex"));
       const rel=relativePath||file.file_name||(file.file_id+".bin");
       return result(await callBridge("bridge.update.stage",{updateId:id,relativePath:rel,sha256,contentBase64:bytes.toString("base64")},bridgeId||""));
-    } catch(e){ return jsonResult({ok:false,error:String(e?.message||e)},true); }
+    } catch(err){ return jsonResult({ok:false,error:String(err?.message||err)},true); }
   });
 
   mcp.registerTool("pc_execute", {
