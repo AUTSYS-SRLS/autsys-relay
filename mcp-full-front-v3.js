@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 
-const VERSION = "0.1.0.16";
+const VERSION = "0.1.0.17";
 const PORT = Number(process.env.PORT || 10006);
 const BACKEND_PORT = Number(process.env.GATEWAY_INTERNAL_PORT || 10001);
 const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
@@ -1005,7 +1005,7 @@ function buildMcp() {
 
   mcp.registerTool("project_db_query", {
     title: "Leggi database locale progetto AUTSYS",
-    description: "Esegue una singola SELECT/PRAGMA tramite il project_db_tool governato sul file AUTSYS_PROJECT.sqlite indicato.",
+    description: "Esegue una singola SELECT/PRAGMA read-only nativa sul file AUTSYS_PROJECT.sqlite indicato, senza helper Python o process.start.",
     inputSchema: z.object({
       path: z.string().min(1),
       sql: z.string().min(1),
@@ -1013,14 +1013,8 @@ function buildMcp() {
       bridgeId: z.string().optional()
     }),
     annotations: ro
-  }, async ({ path, sql, maxRows, bridgeId }) => {
-    try {
-      const out = await runProjectDbHelper({ operation: "query", path, sql, maxRows }, bridgeId || "");
-      return jsonResult(out);
-    } catch (e) {
-      return jsonResult({ ok: false, error: String(e?.message || e) }, true);
-    }
-  });
+  }, async ({ path, sql, maxRows, bridgeId }) =>
+    result(await callBridge("project.db.query", { path, sql, maxRows }, bridgeId || "")));
 
   mcp.registerTool("project_db_write", {
     title: "Scrivi database locale progetto AUTSYS",
