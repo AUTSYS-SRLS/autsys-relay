@@ -540,6 +540,20 @@ function buildMcp() {
   );
 
 
+  // Direct, read-only SQLite entry, deliberately early in the MCP catalog.
+  mcp.registerTool("pc_sqlite_query", {
+    title: "Leggi SQLite AUTSYS (sola lettura)",
+    description: "Legge un database SQLite autorizzato (.sqlite/.sqlite3/.db) mediante una singola SELECT o PRAGMA. Nessuna scrittura, nessun processo o copia. Usa la capability nativa sqlite.query.",
+    inputSchema: z.object({
+      path: z.string().min(1),
+      sql: z.string().min(1),
+      maxRows: z.number().int().min(1).max(1000).default(1000),
+      bridgeId: z.string().optional()
+    }),
+    annotations: ro
+  }, async ({ path, sql, maxRows, bridgeId }) =>
+    result(await callBridge("sqlite.query", { path, sql, maxRows }, bridgeId || "")));
+
   // Compact typed surface. Keep these FIRST: ChatGPT may materialize only the first ~24 tools.
   // The native/legacy tools remain registered below for backward compatibility.
 
