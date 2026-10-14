@@ -609,6 +609,20 @@ function buildMcp() {
     annotations: wi
   }, async ({ vk, bridgeId }) => result(await callBridge("desktop.input.key", {vk}, bridgeId || "")));
 
+  mcp.registerTool("desktop_controls_inspect", {
+    title: "Ispeziona controlli Windows",
+    description: "Elenca i controlli della finestra tramite UI Automation.",
+    inputSchema: z.object({ handle: z.number().int(), bridgeId: z.string().optional() }),
+    annotations: ro
+  }, async ({ handle, bridgeId }) => result(await callBridge("desktop.controls.inspect", {handle}, bridgeId || "")));
+
+  mcp.registerTool("desktop_input_text", {
+    title: "Inserisci testo Windows",
+    description: "Inserisce testo ordinario nel controllo attivo; non usare per credenziali.",
+    inputSchema: z.object({ text: z.string().max(2000), bridgeId: z.string().optional() }),
+    annotations: wi
+  }, async ({ text, bridgeId }) => result(await callBridge("desktop.input.text", {text}, bridgeId || "")));
+
   mcp.registerTool("bridge_health", {
     title: "Stato AUTSYS PC BRIDGE",
     description: "Legge stato, versione e identita del Bridge.",
