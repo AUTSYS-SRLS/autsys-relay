@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 
-const VERSION = "0.1.0.24";
+const VERSION = "0.1.0.25";
 const PORT = Number(process.env.PORT || 10006);
 const BACKEND_PORT = Number(process.env.GATEWAY_INTERNAL_PORT || 10001);
 const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
@@ -573,6 +573,13 @@ function buildMcp() {
     inputSchema: z.object({ bridgeId: z.string().optional() }),
     annotations: ro
   }, async ({ bridgeId }) => result(await callBridge("desktop.windows.list", {}, bridgeId || "")));
+
+  mcp.registerTool("desktop_windows_inspect", {
+    title: "Ispeziona finestra Windows",
+    description: "Legge titolo e coordinate della finestra interattiva.",
+    inputSchema: z.object({ handle: z.number().int(), bridgeId: z.string().optional() }),
+    annotations: ro
+  }, async ({ handle, bridgeId }) => result(await callBridge("desktop.windows.inspect", { handle }, bridgeId || "")));
 
   mcp.registerTool("bridge_health", {
     title: "Stato AUTSYS PC BRIDGE",
