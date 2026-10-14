@@ -581,6 +581,34 @@ function buildMcp() {
     annotations: ro
   }, async ({ handle, bridgeId }) => result(await callBridge("desktop.windows.inspect", { handle }, bridgeId || "")));
 
+  mcp.registerTool("desktop_windows_focus", {
+    title: "Attiva una finestra desktop",
+    description: "Attiva una finestra desktop.",
+    inputSchema: z.object({ handle: z.number().int(), bridgeId: z.string().optional() }),
+    annotations: wi
+  }, async ({ handle, bridgeId }) => result(await callBridge("desktop.windows.focus", {handle}, bridgeId || "")));
+
+  mcp.registerTool("desktop_screen_capture", {
+    title: "Acquisisce il desktop interattivo",
+    description: "Acquisisce il desktop interattivo.",
+    inputSchema: z.object({ bridgeId: z.string().optional() }),
+    annotations: ro
+  }, async ({ bridgeId }) => result(await callBridge("desktop.screen.capture", {}, bridgeId || "")));
+
+  mcp.registerTool("desktop_input_click", {
+    title: "Clicca alle coordinate del desktop",
+    description: "Clicca alle coordinate del desktop.",
+    inputSchema: z.object({ x: z.number().int(), y: z.number().int(), bridgeId: z.string().optional() }),
+    annotations: wi
+  }, async ({ x, y, bridgeId }) => result(await callBridge("desktop.input.click", {x,y}, bridgeId || "")));
+
+  mcp.registerTool("desktop_input_key", {
+    title: "Invia un tasto virtuale al desktop",
+    description: "Invia un tasto virtuale al desktop.",
+    inputSchema: z.object({ vk: z.number().int().min(1).max(254), bridgeId: z.string().optional() }),
+    annotations: wi
+  }, async ({ vk, bridgeId }) => result(await callBridge("desktop.input.key", {vk}, bridgeId || "")));
+
   mcp.registerTool("bridge_health", {
     title: "Stato AUTSYS PC BRIDGE",
     description: "Legge stato, versione e identita del Bridge.",
