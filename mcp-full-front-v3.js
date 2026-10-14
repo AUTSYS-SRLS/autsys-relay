@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 
-const VERSION = "0.1.0.23";
+const VERSION = "0.1.0.24";
 const PORT = Number(process.env.PORT || 10006);
 const BACKEND_PORT = Number(process.env.GATEWAY_INTERNAL_PORT || 10001);
 const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
@@ -566,6 +566,13 @@ function buildMcp() {
     try { return jsonResult(await bootstrap(scope, projectName || "", bridgeId || "")); }
     catch (err) { return jsonResult({ ok:false, error:String(err?.message || err) }, true); }
   });
+
+  mcp.registerTool("desktop_windows_list", {
+    title: "Elenca finestre desktop Windows",
+    description: "Elenca le finestre visibili della sessione Windows interattiva tramite l'agente desktop generico AUTSYS.",
+    inputSchema: z.object({ bridgeId: z.string().optional() }),
+    annotations: ro
+  }, async ({ bridgeId }) => result(await callBridge("desktop.windows.list", {}, bridgeId || "")));
 
   mcp.registerTool("bridge_health", {
     title: "Stato AUTSYS PC BRIDGE",
