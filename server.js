@@ -6,7 +6,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 
-const VERSION = "0.1.0.13";
+const VERSION = "0.1.0.14";
+const INSTANCE_ID = crypto.randomUUID();
 const PORT = Number(process.env.PORT || 10000);
 const BRIDGE_TOKEN = process.env.BRIDGE_TOKEN || "";
 const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
@@ -251,6 +252,11 @@ app.get("/", (_req, res) => {
   });
 });
 
+app.get("/bridge/instance", (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ ok: true, instanceId: INSTANCE_ID });
+});
+
 app.get("/api/status", requireControl, (_req, res) => {
   res.json({
     ok: true,
@@ -385,6 +391,7 @@ wss.on("connection", ws => {
         }
       });
 
+      try { sendJson(ws, { type: "hello_ack", instanceId: INSTANCE_ID }); } catch {}
       console.log(`Bridge connected: ${bridgeId} ${msg.version || ""}`);
       return;
     }
