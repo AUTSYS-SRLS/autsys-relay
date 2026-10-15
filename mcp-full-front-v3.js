@@ -463,6 +463,19 @@ async function bootstrap(scope, projectName = "", bridgeId = "") {
     { entity: "AUTSYS S.R.L.S.", path: storageRoots.autsys_srls || null, purpose: "Archivio fisico dei documenti AI emessi da AUTSYS S.R.L.S." }
   ].filter(x => x.path);
   const found = Boolean(row.project_found);
+  // Project handoffs live exclusively in the owner's local AUTSYS_PROJECT.sqlite.
+  // Bootstrap must surface pending handoffs without consuming or changing them.
+  let pendingHandoffs = [];
+  if (scope === "PROJECT" && found && row.root_path) {
+    try {
+      const path = String(row.root_path).replace(/[\\/]+$/, "") + "\\AUTSYS_PROJECT.sqlite";
+      const sql = "SELECT id,public_id,session_key,created_at,session_date,session_title,status,summary,completed_work,verified_state,pending_work,operational_notes,external_links,next_session_bootstrap,source_reference,COUNT(*) OVER() AS pending_total FROM session_handoffs WHERE status='pending' ORDER BY created_at DESC,id DESC LIMIT 3";
+      const handoffData = bridgePayload(await callBridge("project.db.query", { path, sql, maxRows: 3 }, bridgeId), "bootstrap project handoffs");
+      pendingHandoffs = Array.isArray(handoffData?.rows) ? handoffData.rows : [];
+    } catch (e) {
+      warnings.push("bootstrap project handoffs: " + String(e?.message || e));
+    }
+  }
 
   return {
     ok: true,
@@ -517,6 +530,8 @@ async function bootstrap(scope, projectName = "", bridgeId = "") {
     projectDatabaseSources: databaseSourceRows,
     openItemCount: openItemRows.length,
     openItems: openItemRows,
+    pendingHandoffCount: pendingHandoffs.length ? Number(pendingHandoffs[0].pending_total || pendingHandoffs.length) : 0,
+    pendingHandoffs,
     documentRuleCount: 0,
     documentRules: [],
     documentStorageRootCount: 0,
