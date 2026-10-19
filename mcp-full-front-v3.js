@@ -865,7 +865,10 @@ function buildMcp() {
     inputSchema: z.object({
       projectName:z.string().min(1), projectKey:z.string().optional(), entityKind:z.string().min(1),
       rootPath:z.string().optional(), repositoryUrl:z.string().optional(), repositoryBranch:z.string().optional(),
-      description:z.string().optional(), isAuthoritative:z.boolean().default(true), bridgeId:z.string().optional()
+      description:z.string().optional(),
+      currentStateSummary:z.string().max(16384).optional(), currentObjective:z.string().max(16384).optional(),
+      nextAction:z.string().max(16384).optional(), lastReviewedAt:z.string().optional(),
+      isAuthoritative:z.boolean().default(true), bridgeId:z.string().optional()
     }),
     annotations: wr
   }, async ({ bridgeId, projectName, ...rest }) =>
@@ -1631,6 +1634,10 @@ function buildMcp() {
       repositoryUrl: z.string().optional(),
       repositoryBranch: z.string().optional(),
       description: z.string().optional(),
+      currentStateSummary: z.string().max(16384).optional(),
+      currentObjective: z.string().max(16384).optional(),
+      nextAction: z.string().max(16384).optional(),
+      lastReviewedAt: z.string().optional(),
       isAuthoritative: z.boolean().default(true),
       bridgeId: z.string().optional()
     }),
