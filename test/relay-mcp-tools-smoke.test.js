@@ -5,7 +5,8 @@ import { spawn } from "node:child_process";
 
 const expectedTools = [
   "relay_get_diagnostics", "relay_events_inspect", "relay_commands_inspect",
-  "relay_auth_status", "relay_redis_status", "autsys_http_authenticated_read"
+  "relay_auth_status", "relay_redis_status", "relay_redis_keys_summary",
+  "relay_redis_queue_summary", "autsys_http_authenticated_read"
 ];
 const diagHash="d4581386154206142b0ee9c51d5491ea1baa1864fa1dfd30fc91bf6bc909273f";
 const eventsHash="659db4d0071727e6fc2aff17182b237c336f7bd7d2318ccc0031e54c6162d221";
@@ -106,7 +107,8 @@ test("MCP Relay tools available and tested end-to-end with isolated fake Bridge"
   const child=spawn(process.execPath,["mcp-full-front-v3.js"],{
     cwd:process.cwd(),
     env:{...process.env,PORT:String(port),GATEWAY_INTERNAL_PORT:String(bridgePort),
-      CONTROL_TOKEN:auth,RENDER_API_KEY:"",AUTSYS_RELAY_MCP_SMOKE_DELAY_MS:"300"},
+      CONTROL_TOKEN:auth,RENDER_API_KEY:"",AUTSYS_RELAY_MCP_SMOKE_DELAY_MS:"300",
+      NODE_ENV:"test",AUTSYS_TEST_REDIS_URL:"redis://127.0.0.1:6379/15"},
     stdio:["ignore","pipe","pipe"]
   });
   let startupOutput="";
@@ -166,6 +168,26 @@ test("MCP Relay tools available and tested end-to-end with isolated fake Bridge"
     },7));
     assert.equal(generic.ok,true);
     assert.equal(generic.count,0);
+    const keys=content(await rpc(port,"tools/call",{
+      name:"relay_redis_keys_summary",arguments:{}
+    },8));
+    assert.equal(keys.ok,true);
+    assert.equal(keys.redis_ping,"PONG");
+    assert.equal(keys.raw_keys_returned,false);
+    assert.equal(keys.credentials_exposed,false);
+    const queues=content(await rpc(port,"tools/call",{
+      name:"relay_redis_queue_summary",arguments:{}
+    },9));
+    assert.equal(queues.ok,true);
+    assert.equal(queues.ack_sent,false);
+    assert.equal(queues.queues.events.present,false);
+    assert.equal(queues.queues.commands.present,false);
+    const redisStatus=content(await rpc(port,"tools/call",{
+      name:"relay_redis_status",arguments:{}
+    },10));
+    assert.equal(redisStatus.ok,true);
+    assert.equal(redisStatus.redis_ping,"PONG");
+    assert.equal(redisStatus.read_only,true);
     assert.ok(operations.length>=10,"Native mocked operations executed");
     assert.ok(operations.every(x=>["fs.hash","process.start","process.status"].includes(x.tool)));
     assert.ok(!operations.some(x=>/ack|redis\.set|delete|write/i.test(x.tool)));
@@ -175,6 +197,8 @@ test("MCP Relay tools available and tested end-to-end with isolated fake Bridge"
       await new Promise(resolve=>setTimeout(resolve,50));
     }
     assert.equal(bootChecked,true,"Gateway boot MCP typed smoke must succeed: "+startupOutput.slice(-1500));
+    assert.equal(startupOutput.includes("AUTSYS_REDIS_MCP_TYPED_SMOKE_OK"),true,
+      "Gateway boot read-only Redis smoke must succeed: "+startupOutput.slice(-1600));
   }finally{
     await shutdown(child);
     await new Promise(resolve=>backend.close(resolve));
