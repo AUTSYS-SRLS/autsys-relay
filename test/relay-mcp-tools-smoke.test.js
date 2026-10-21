@@ -106,9 +106,12 @@ test("MCP Relay tools available and tested end-to-end with isolated fake Bridge"
   const child=spawn(process.execPath,["mcp-full-front-v3.js"],{
     cwd:process.cwd(),
     env:{...process.env,PORT:String(port),GATEWAY_INTERNAL_PORT:String(bridgePort),
-      CONTROL_TOKEN:auth,RENDER_API_KEY:""},
-    stdio:"ignore"
+      CONTROL_TOKEN:auth,RENDER_API_KEY:"",AUTSYS_RELAY_MCP_SMOKE_DELAY_MS:"300"},
+    stdio:["ignore","pipe","pipe"]
   });
+  let startupOutput="";
+  child.stdout.on("data",chunk=>{startupOutput+=String(chunk);});
+  child.stderr.on("data",chunk=>{startupOutput+=String(chunk);});
   try {
     let ready=false;
     for(let i=0;i<120;i++){
@@ -166,6 +169,12 @@ test("MCP Relay tools available and tested end-to-end with isolated fake Bridge"
     assert.ok(operations.length>=10,"Native mocked operations executed");
     assert.ok(operations.every(x=>["fs.hash","process.start","process.status"].includes(x.tool)));
     assert.ok(!operations.some(x=>/ack|redis\.set|delete|write/i.test(x.tool)));
+    let bootChecked=false;
+    for(let i=0;i<120;i++){
+      if(startupOutput.includes("AUTSYS_RELAY_MCP_TYPED_SMOKE_OK")){bootChecked=true;break;}
+      await new Promise(resolve=>setTimeout(resolve,50));
+    }
+    assert.equal(bootChecked,true,"Gateway boot MCP typed smoke must succeed: "+startupOutput.slice(-1500));
   }finally{
     await shutdown(child);
     await new Promise(resolve=>backend.close(resolve));
