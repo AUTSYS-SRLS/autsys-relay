@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 
-const VERSION = "0.1.0.25";
+const VERSION = "0.1.0.26";
 const PORT = Number(process.env.PORT || 10006);
 const BACKEND_PORT = Number(process.env.GATEWAY_INTERNAL_PORT || 10001);
 const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
@@ -165,6 +165,89 @@ function compactProcessResult(body, includeLogs = false, tailChars = 4000) {
     executionMs: br?.executionMs,
     result: compactProcessSnapshot(br?.result, includeLogs, tailChars)
   });
+}
+
+
+// AUTSYS Relay diagnostics: fixed service, fixed scripts, pinned SHA-256.
+// Auth remains inside the Windows AUTSYS Centrale service environment.
+const RELAY_PROBE_SCRIPTS = Object.freeze({
+  diag: Object.freeze({
+    path: String.raw`D:\AUTSYS\AUTSYS S.R.L.S\CLIENTI\AUTSYS S.R.L.S\0000 - AUTSYS CENTRALE\DIAGNOSTICA_BRIDGE\BRIDGE_RECOVERY_20261011_GLOBAL\EXECUTABLES\CHECK_RELAY_DIAG_READONLY_20261021.ps1`,
+    sha256: "d4581386154206142b0ee9c51d5491ea1baa1864fa1dfd30fc91bf6bc909273f",
+    prefix: "RELAY_DIAG_JSON "
+  }),
+  events: Object.freeze({
+    path: String.raw`D:\AUTSYS\AUTSYS S.R.L.S\CLIENTI\AUTSYS S.R.L.S\0000 - AUTSYS CENTRALE\DIAGNOSTICA_BRIDGE\BRIDGE_RECOVERY_20261011_GLOBAL\EXECUTABLES\CHECK_RELAY_EVENTS_READONLY_20261021.ps1`,
+    sha256: "659db4d0071727e6fc2aff17182b237c336f7bd7d2318ccc0031e54c6162d221",
+    prefix: "RELAY_EVENTS_JSON "
+  })
+});
+async function invokeRelayFixedReadOnlyProbe(kind, bridgeId = "", limit = 50) {
+  const spec = RELAY_PROBE_SCRIPTS[kind];
+  if (!spec) throw new Error("RELAY_PROBE_NOT_ALLOWED");
+  const digest = bridgePayload(await callBridge("fs.hash", { path: spec.path }, bridgeId), "relay probe checksum");
+  if (String(digest?.sha256 || "").toLowerCase() !== spec.sha256)
+    throw new Error("RELAY_DIAGNOSTIC_SCRIPT_INTEGRITY_FAILED");
+  const args = kind === "events" ? ["-Limit", String(Math.max(1, Math.min(100, limit)))] : [];
+  const started = bridgePayload(await callBridge("process.start", {
+    kind: "powershell", target: spec.path, args
+  }, bridgeId), "relay probe launch");
+  const processId = String(started?.processId || "");
+  if (!processId) throw new Error("RELAY_DIAGNOSTIC_PROCESS_ID_MISSING");
+  for (let attempt = 0; attempt < 18; attempt++) {
+    const status = bridgePayload(await callBridge("process.status", { processId }, bridgeId), "relay probe status");
+    if (!status?.running) {
+      const output = String(status?.stdout || "");
+      if (status?.exitCode !== 0) {
+        const errorLine = output.split(/\r?\n/).find(s => /^RELAY_(DIAG|EVENTS)\|/.test(s)) || "";
+        const code = /status=([A-Z_]+)/.exec(errorLine)?.[1] || "RELAY_DIAGNOSTIC_EXECUTION_FAILED";
+        throw new Error(code);
+      }
+      const rows = output.split(/\r?\n/)
+        .filter(line => line.startsWith(spec.prefix))
+        .map(line => JSON.parse(line.slice(spec.prefix.length)));
+      if (!rows.length || rows.some(row => !row?.ok && kind === "events"))
+        throw new Error("RELAY_DIAGNOSTIC_RESPONSE_INCOMPLETE");
+      return rows;
+    }
+    await new Promise(resolve => setTimeout(resolve, 350));
+  }
+  throw new Error("RELAY_DIAGNOSTIC_PROCESS_TIMEOUT");
+}
+async function readRelayDiag(bridgeId = "") {
+  const rows = await invokeRelayFixedReadOnlyProbe("diag", bridgeId);
+  if (rows.length !== 2 || rows.some(x => !Number.isInteger(x.manager_events_queued) ||
+      !Number.isInteger(x.commands_queued) || !Number.isInteger(x.manager_installations_with_commands)))
+    throw new Error("RELAY_DIAGNOSTIC_COUNTERS_INCOMPLETE");
+  const current = rows[rows.length - 1];
+  return {
+    ok: true,
+    timestamp_utc: current.timestamp_utc,
+    service: current.service,
+    version: current.version,
+    protocol: current.protocol,
+    manager_events_queued: current.manager_events_queued,
+    commands_queued: current.commands_queued,
+    manager_installations_with_commands: current.manager_installations_with_commands,
+    persistence: current.persistence,
+    manager_binding_mode: current.manager_binding_mode,
+    manager_license_enforcement: current.manager_license_enforcement,
+    redis_connection_status: "not_available",
+    http_status: current.http_status,
+    elapsed_ms: current.elapsed_ms,
+    readings: rows.map(x => ({
+      timestamp_utc: x.timestamp_utc, manager_events_queued: x.manager_events_queued,
+      commands_queued: x.commands_queued, manager_installations_with_commands: x.manager_installations_with_commands,
+      http_status: x.http_status, elapsed_ms: x.elapsed_ms
+    })),
+    stable: rows[0].manager_events_queued === current.manager_events_queued &&
+      rows[0].commands_queued === current.commands_queued &&
+      rows[0].manager_installations_with_commands === current.manager_installations_with_commands,
+    no_ack_sent: true,
+    relay_diag_expires_ttl_records: true,
+    credential_source: "AUTSYS Centrale Windows service environment",
+    credential_exposed: false
+  };
 }
 
 const asyncJobs = new Map();
@@ -580,6 +663,109 @@ function buildMcp() {
   }, async ({ scope, projectName, bridgeId }) => {
     try { return jsonResult(await bootstrap(scope, projectName || "", bridgeId || "")); }
     catch (err) { return jsonResult({ ok:false, error:String(err?.message || err) }, true); }
+  });
+
+
+  // AUTSYS Central Relay: read-only, authenticated through the existing
+  // Windows Centrale environment; fixed scripts and pinned hashes.
+  mcp.registerTool("relay_get_diagnostics", {
+    title: "Diagnostica code AUTSYS Relay",
+    description: "Legge due volte i contatori reali del Relay AUTSYS in produzione: eventi, comandi, installazioni, versione e persistenza. Nessun ACK o modifica dei messaggi; non espone credenziali. Un comando in attesa impedisce un deploy sicuro.",
+    inputSchema: z.object({ bridgeId: z.string().optional() }),
+    annotations: ro
+  }, async ({ bridgeId }) => {
+    try { return jsonResult(await readRelayDiag(bridgeId || "")); }
+    catch (error) { return jsonResult({ ok:false, error:String(error?.message || error), counts_available:false },true); }
+  });
+
+  mcp.registerTool("relay_events_inspect", {
+    title: "Ispeziona eventi in attesa Relay",
+    description: "Legge i metadati degli eventi Manager in attesa tramite GET autenticato, senza ACK, contenuti payload o firme.",
+    inputSchema: z.object({
+      limit: z.number().int().min(1).max(100).default(50),
+      bridgeId: z.string().optional()
+    }),
+    annotations: ro
+  }, async ({ limit, bridgeId }) => {
+    try {
+      const rows=await invokeRelayFixedReadOnlyProbe("events", bridgeId || "", limit);
+      const row=rows[rows.length-1];
+      return jsonResult({ ok:true, ...row, limit, payloads_returned:false,
+        no_ack_sent:true, relay_get_expires_ttl_records:true });
+    } catch(error) { return jsonResult({ok:false,error:String(error?.message || error),items_available:false},true); }
+  });
+
+  mcp.registerTool("relay_commands_inspect", {
+    title: "Ispeziona conteggio comandi Relay",
+    description: "Restituisce conteggio e numero installazioni con comandi in attesa; i dettagli per installazione non sono accessibili con la credenziale Centrale nell'API corrente. Nessun ACK.",
+    inputSchema: z.object({ bridgeId: z.string().optional() }),
+    annotations: ro
+  }, async ({ bridgeId }) => {
+    try {
+      const data=await readRelayDiag(bridgeId || "");
+      return jsonResult({ok:true,timestamp_utc:data.timestamp_utc,
+        commands_queued:data.commands_queued,
+        manager_installations_with_commands:data.manager_installations_with_commands,
+        items:null, details_status:"not_available_requires_governed_admin_endpoint",
+        no_ack_sent:true });
+    } catch(error){return jsonResult({ok:false,error:String(error?.message || error),counts_available:false},true);}
+  });
+
+  mcp.registerTool("relay_auth_status", {
+    title: "Verifica autorizzazione AUTSYS Relay",
+    description: "Verifica senza esporre credenziali se AUTSYS Centrale riesce a autenticarsi al Relay. Non restituisce token o segreti.",
+    inputSchema: z.object({ bridgeId: z.string().optional() }),
+    annotations: ro
+  }, async ({ bridgeId }) => {
+    try {
+      const data=await readRelayDiag(bridgeId || "");
+      return jsonResult({ok:true,timestamp_utc:data.timestamp_utc,
+        centralRelayKey:{available:true,working:true,source:"Windows service environment",operations:["GET /diag","GET /v1/central/events"]},
+        redisCredential:{available:"not_available",working:"not_available"},
+        renderApi:{available:Boolean(RENDER_API_KEY),working:"not_tested"},
+        githubApi:{available:"not_available",working:"not_tested"},credentials_exposed:false});
+    } catch(error){return jsonResult({ok:false,centralRelayKey:{working:false},
+      reason:String(error?.message||error),credentials_exposed:false},true);}
+  });
+
+  mcp.registerTool("relay_redis_status", {
+    title: "Stato Redis del Relay AUTSYS",
+    description: "Legge solo stato e impostazioni non segrete della risorsa Render Redis corretta. Non consulta né modifica direttamente chiavi o valori.",
+    inputSchema: z.object({}),
+    annotations: ro
+  }, async () => {
+    try {
+      const kv=await callRender("/key-value/red-dbacgfijnfac73f6qnb0");
+      return jsonResult({ok:true,provider:"Render",name:kv?.name ?? "not_available",
+        status:kv?.status ?? "not_available",region:kv?.region ?? "not_available",
+        persistence:kv?.options?.persistenceMode ?? "not_available",
+        maxmemory_policy:kv?.options?.maxmemoryPolicy ?? "not_available",
+        plan:kv?.plan ?? "not_available",
+        authenticated_redis_ping:"not_available",
+        redis_memory_bytes:"not_available",
+        redis_queue_counts:"not_available",
+        note:"In Relay 0.3.1 le code sono nella memoria Node, non in questa risorsa Redis.",
+        readOnly:true,credentials_exposed:false});
+    } catch(error){return jsonResult({ok:false,error:String(error?.message||error)},true);}
+  });
+
+  mcp.registerTool("autsys_http_authenticated_read", {
+    title: "Lettura HTTPS autenticata AUTSYS",
+    description: "Registro chiuso di endpoint AUTSYS: Relay diag o eventi. Non accetta URL arbitrari, POST o credenziali; solo GET fissi tramite Bridge.",
+    inputSchema: z.object({
+      service: z.literal("autsys-central-relay"),
+      resource: z.enum(["diag","events"]),
+      limit: z.number().int().min(1).max(100).default(50),
+      bridgeId: z.string().optional()
+    }),
+    annotations: ro
+  }, async ({ service, resource, limit, bridgeId }) => {
+    try {
+      if(service!=="autsys-central-relay")throw new Error("AUTSYS_HTTP_SERVICE_NOT_ALLOWED");
+      if(resource==="diag")return jsonResult(await readRelayDiag(bridgeId||""));
+      const rows=await invokeRelayFixedReadOnlyProbe("events",bridgeId||"",limit);
+      return jsonResult({ok:true,...rows[rows.length-1],service,resource,readOnly:true});
+    }catch(error){return jsonResult({ok:false,error:String(error?.message||error)},true);}
   });
 
   mcp.registerTool("desktop_windows_list", {
