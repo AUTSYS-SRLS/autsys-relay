@@ -1,0 +1,28 @@
+name: Relay MCP isolated smoke
+
+on:
+  push:
+    branches:
+      - test/relay-mcp-smoke-20261021
+  pull_request:
+    branches:
+      - pc-bridge-gateway
+
+permissions:
+  contents: read
+
+jobs:
+  mcp-tools-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: End-to-end MCP tools/list + tools/call with isolated fake Bridge
+        run: node --test test/relay-mcp-tools-smoke.test.js

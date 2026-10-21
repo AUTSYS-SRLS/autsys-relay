@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 
-const VERSION = "0.1.0.26";
+const VERSION = "0.1.0.27";
 const PORT = Number(process.env.PORT || 10006);
 const BACKEND_PORT = Number(process.env.GATEWAY_INTERNAL_PORT || 10001);
 const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
@@ -2045,5 +2045,64 @@ app.get("/health", (_req, res) =>
     utc: new Date().toISOString()
   }));
 
-app.listen(PORT, "127.0.0.1", () =>
-  console.log(`AUTSYS MCP FULL FRONT ${VERSION} listening on ${PORT}; backend=${BACKEND_PORT}; bootstrap=v6`));
+
+// A single read-only boot smoke test of the ACTUAL MCP frontend and Bridge.
+// Internal loopback only. Never prints credentials, event contents or payloads.
+async function relayMcpBootSelfcheck() {
+  const uri="http://127.0.0.1:"+PORT+"/mcp";
+  let id=1000;
+  const rpc=async(method,params={})=>{
+    const response=await fetch(uri,{
+      method:"POST",
+      headers:{"content-type":"application/json","accept":"application/json, text/event-stream",
+        "mcp-protocol-version":"2025-03-26"},
+      body:JSON.stringify({jsonrpc:"2.0",id:++id,method,params}),
+      signal:AbortSignal.timeout(45000)
+    });
+    if(!response.ok)throw new Error("MCP_HTTP_"+response.status);
+    const raw=await response.text();
+    const parsed=raw.startsWith("event:")?
+      JSON.parse(raw.split(/\r?\n/).find(x=>x.startsWith("data: "))?.slice(6)||"null"):
+      JSON.parse(raw);
+    if(parsed?.error)throw new Error("MCP_RPC_"+parsed.error.code);
+    return parsed?.result;
+  };
+  await rpc("initialize",{protocolVersion:"2025-03-26",capabilities:{},
+    clientInfo:{name:"autsys-native-read-only-smoke",version:"1"}});
+  const catalog=await rpc("tools/list");
+  if(!catalog?.tools?.some(x=>x.name==="relay_get_diagnostics"))
+    throw new Error("RELAY_TYPED_TOOL_NOT_REGISTERED");
+  const answer=await rpc("tools/call",{name:"relay_get_diagnostics",arguments:{}});
+  const text=answer?.content?.find(x=>x.type==="text")?.text;
+  if(!text)throw new Error("RELAY_TYPED_TOOL_EMPTY");
+  const data=JSON.parse(text);
+  if(data.ok!==true||data.no_ack_sent!==true||
+     !Number.isInteger(data.manager_events_queued)||
+     !Number.isInteger(data.commands_queued))
+    throw new Error("RELAY_TYPED_TOOL_INVALID");
+  console.log("AUTSYS_RELAY_MCP_TYPED_SMOKE_OK",JSON.stringify({
+    relayVersion:data.version,events:data.manager_events_queued,
+    commands:data.commands_queued,readings:data.readings?.length||0,
+    ackSent:false,credentialExposed:false
+  }));
+}
+function startRelayBootSelfcheck() {
+  const ms=Math.max(200,Math.min(60000,
+    Number(process.env.AUTSYS_RELAY_MCP_SMOKE_DELAY_MS)||12000));
+  setTimeout(async()=>{
+    for(let attempt=1;attempt<=3;attempt++){
+      try{await relayMcpBootSelfcheck();return;}
+      catch(e){
+        const code=String(e?.message||"UNKNOWN").split(/\s/)[0].slice(0,90);
+        console.warn("AUTSYS_RELAY_MCP_TYPED_SMOKE_RETRY",JSON.stringify({attempt,code}));
+        if(attempt<3)await new Promise(resolve=>setTimeout(resolve,12000));
+      }
+    }
+    console.error("AUTSYS_RELAY_MCP_TYPED_SMOKE_FAILED",JSON.stringify({attempts:3}));
+  },ms).unref();
+}
+
+app.listen(PORT, "127.0.0.1", () => {
+  console.log(`AUTSYS MCP FULL FRONT ${VERSION} listening on ${PORT}; backend=${BACKEND_PORT}; bootstrap=v6`);
+  startRelayBootSelfcheck();
+});
