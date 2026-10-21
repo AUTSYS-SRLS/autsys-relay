@@ -757,9 +757,9 @@ function buildMcp() {
     annotations: ro
   }, async () => {
     try {
-      const [report, kv] = await Promise.all([
-        readAutSysRedisSafely(), callRender("/key-value/red-dbacgfijnfac73f6qnb0")
-      ]);
+      const report = await readAutSysRedisSafely();
+      let kv=null;
+      try { kv=await callRender("/key-value/red-dbacgfijnfac73f6qnb0"); } catch {}
       return jsonResult({ ...report, render_status: kv?.status ?? "not_available",
         render_region: kv?.region ?? "not_available",
         render_persistence: kv?.options?.persistenceMode ?? "not_available",
