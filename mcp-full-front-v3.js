@@ -3,8 +3,9 @@ import crypto from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
+import { inspectRelayRedis } from "./relay-redis-inspection.js";
 
-const VERSION = "0.1.0.27";
+const VERSION = "0.1.0.28";
 const PORT = Number(process.env.PORT || 10006);
 const BACKEND_PORT = Number(process.env.GATEWAY_INTERNAL_PORT || 10001);
 const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
@@ -121,6 +122,27 @@ async function callRender(path, options = {}) {
     throw new Error("Render API " + response.status + ": " + detail);
   }
   return parsed;
+}
+
+// Direct read-only Redis diagnostics on the authorised Render Key Value instance.
+// Retrieve a connection string into process memory only. Neither the URL nor
+// Redis errors, connection info or raw keys can reach MCP tools or logs.
+async function readAutSysRedisSafely() {
+  try {
+    let internalUrl;
+    if (process.env.NODE_ENV === "test" && process.env.AUTSYS_TEST_REDIS_URL) {
+      internalUrl = process.env.AUTSYS_TEST_REDIS_URL;
+    } else {
+      const info = await callRender("/key-value/red-dbacgfijnfac73f6qnb0/connection-info",
+        { timeoutMs: 12000 });
+      internalUrl = info?.internalConnectionString;
+    }
+    if (!internalUrl || typeof internalUrl !== "string")
+      throw new Error("RELAY_REDIS_CONNECTION_NOT_AVAILABLE");
+    return await inspectRelayRedis({ connectionString: internalUrl });
+  } catch (_err) {
+    throw new Error("RELAY_REDIS_READ_ONLY_ACCESS_UNAVAILABLE");
+  }
 }
 
 function renderResult(data) {
@@ -729,24 +751,57 @@ function buildMcp() {
   });
 
   mcp.registerTool("relay_redis_status", {
-    title: "Stato Redis del Relay AUTSYS",
-    description: "Legge solo stato e impostazioni non segrete della risorsa Render Redis corretta. Non consulta né modifica direttamente chiavi o valori.",
+    title: "Redis AUTSYS Relay - stato e dati read-only",
+    description: "Interroga Redis direttamente dal gateway Render via connessione ufficiale al solo Key Value AUTSYS: PING, memoria, conteggio chiavi autorizzate, TTL inventario, lunghezza, code persistenti. Non espone credenziali, valori, ID o payload. Le code nel Relay 0.3.1 sono ancora in RAM.",
     inputSchema: z.object({}),
     annotations: ro
   }, async () => {
     try {
-      const kv=await callRender("/key-value/red-dbacgfijnfac73f6qnb0");
-      return jsonResult({ok:true,provider:"Render",name:kv?.name ?? "not_available",
-        status:kv?.status ?? "not_available",region:kv?.region ?? "not_available",
-        persistence:kv?.options?.persistenceMode ?? "not_available",
-        maxmemory_policy:kv?.options?.maxmemoryPolicy ?? "not_available",
-        plan:kv?.plan ?? "not_available",
-        authenticated_redis_ping:"not_available",
-        redis_memory_bytes:"not_available",
-        redis_queue_counts:"not_available",
-        note:"In Relay 0.3.1 le code sono nella memoria Node, non in questa risorsa Redis.",
-        readOnly:true,credentials_exposed:false});
-    } catch(error){return jsonResult({ok:false,error:String(error?.message||error)},true);}
+      const [report, kv] = await Promise.all([
+        readAutSysRedisSafely(), callRender("/key-value/red-dbacgfijnfac73f6qnb0")
+      ]);
+      return jsonResult({ ...report, render_status: kv?.status ?? "not_available",
+        render_region: kv?.region ?? "not_available",
+        render_persistence: kv?.options?.persistenceMode ?? "not_available",
+        render_eviction_policy: kv?.options?.maxmemoryPolicy ?? "not_available" });
+    } catch (_err) {
+      return jsonResult({ ok:false, code:"RELAY_REDIS_READ_ONLY_ACCESS_UNAVAILABLE",
+        credentials_exposed:false, payloads_returned:false },true);
+    }
+  });
+
+  mcp.registerTool("relay_redis_keys_summary", {
+    title: "Conteggio chiavi Redis AUTSYS",
+    description: "SCAN di prefissi AUTSYS fissi con conteggi limitati, presenza/TTL/dimensione dell'inventario licenze; nessuna chiave o valore sensibile restituito.",
+    inputSchema: z.object({}),
+    annotations: ro
+  }, async () => {
+    try {
+      const report = await readAutSysRedisSafely();
+      return jsonResult({ ok:true, checked_at_utc: report.inspected_at_utc,
+        redis_ping:report.redis_ping, key_value_id:report.key_value_id,
+        keys:report.keys, read_only:true, raw_keys_returned:false,
+        credentials_exposed:false, payloads_returned:false });
+    } catch(_err) {
+      return jsonResult({ok:false,code:"RELAY_REDIS_READ_ONLY_ACCESS_UNAVAILABLE"},true);
+    }
+  });
+
+  mcp.registerTool("relay_redis_queue_summary", {
+    title: "Code Redis persistenti AUTSYS",
+    description: "Legge TYPE e ZCOUNT delle sole code Redis AUTSYS previste, distinguendole dalle code in RAM del Relay 0.3.1. Non invia ACK né modifica TTL.",
+    inputSchema: z.object({}),
+    annotations: ro
+  }, async () => {
+    try {
+      const report=await readAutSysRedisSafely();
+      return jsonResult({ok:true, checked_at_utc:report.inspected_at_utc,
+        redis_ping:report.redis_ping,queues:report.queues,
+        note:report.transport_notice,read_only:true,ack_sent:false,
+        ttl_purge_called:false,credentials_exposed:false,raw_keys_returned:false});
+    } catch(_err) {
+      return jsonResult({ok:false,code:"RELAY_REDIS_READ_ONLY_ACCESS_UNAVAILABLE"},true);
+    }
   });
 
   mcp.registerTool("autsys_http_authenticated_read", {
@@ -2084,6 +2139,19 @@ async function relayMcpBootSelfcheck() {
     relayVersion:data.version,events:data.manager_events_queued,
     commands:data.commands_queued,readings:data.readings?.length||0,
     ackSent:false,credentialExposed:false
+  }));
+  const redisAnswer = await rpc("tools/call",{name:"relay_redis_keys_summary",arguments:{}});
+  const redisText = redisAnswer?.content?.find(x=>x.type==="text")?.text;
+  const redisInfo = redisText ? JSON.parse(redisText) : {};
+  if(redisInfo.ok!==true || redisInfo.redis_ping!=="PONG" ||
+     redisInfo.credentials_exposed!==false || redisInfo.raw_keys_returned!==false)
+    throw new Error("RELAY_REDIS_MCP_TYPED_TEST_FAILED");
+  console.log("AUTSYS_REDIS_MCP_TYPED_SMOKE_OK",JSON.stringify({
+    ping:redisInfo.redis_ping,
+    bindings:redisInfo.keys?.manager_bindings?.count ?? null,
+    mailboxKeys:redisInfo.keys?.relay_mailbox?.count ?? null,
+    inventory:redisInfo.keys?.license_inventory?.present ?? null,
+    readOnly:true,credentialsExposed:false
   }));
 }
 function startRelayBootSelfcheck() {
