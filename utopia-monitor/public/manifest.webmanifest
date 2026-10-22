@@ -1,0 +1,15 @@
+{
+  "name": "UTOPIA ROBOT",
+  "short_name": "ROBOT",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#08090b",
+  "theme_color": "#08090b",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
