@@ -18,7 +18,7 @@ app.use(express.json({ limit: "40mb" }));
 
 function timeoutFor(tool) {
   if (["pg.roberta.migrate","bridge.update.apply","fs.delete","fs.copy","fs.replace","fs.move_path","fs.hash_tree","fs.compare","fs.tree","fs.search_text","fs.zip","fs.unzip"].includes(tool)) return 300000;
-  if (tool === "sqlite.query") return 120000;
+  if (tool === "sqlite.query") return 135000; // gateway timeout 120s + 15s transport margin
   if (tool === "pg.roberta.write") return 60000;
   return 30000;
 }
