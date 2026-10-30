@@ -14,9 +14,11 @@ const CONTROL_TOKEN = process.env.CONTROL_TOKEN || "";
 const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 30000);
 const LONG_REQUEST_TIMEOUT_MS = Number(process.env.LONG_REQUEST_TIMEOUT_MS || 300000);
 const WRITE_REQUEST_TIMEOUT_MS = Number(process.env.WRITE_REQUEST_TIMEOUT_MS || 60000);
+const SQLITE_REQUEST_TIMEOUT_MS = Number(process.env.SQLITE_REQUEST_TIMEOUT_MS || 120000);
 
 function timeoutForTool(tool) {
   if (["fs.delete","fs.copy","fs.replace","fs.move_path","fs.hash_tree","fs.compare","fs.tree","fs.search_text","fs.zip","fs.unzip","bridge.update.apply","pg.roberta.migrate"].includes(tool)) return LONG_REQUEST_TIMEOUT_MS;
+  if (tool === "sqlite.query") return SQLITE_REQUEST_TIMEOUT_MS;
   if (tool === "pg.roberta.write") return WRITE_REQUEST_TIMEOUT_MS;
   return REQUEST_TIMEOUT_MS;
 }
