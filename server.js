@@ -291,7 +291,9 @@ app.get("/api/status", requireControl, (_req, res) => {
       lastSeenAt: item.lastSeenAt,
       meta: item.meta
     })),
-    pendingRequests: pending.size
+    pendingRequests: pending.size,
+    uncertainBridges: [...uncertainBridges.entries()].map(([bridgeId, reason]) => ({ bridgeId, reason })),
+    pendingDetails: [...pending.entries()].map(([requestId, item]) => ({ requestId, bridgeId: item.bridgeId, elapsedMs: Math.round(performance.now() - item.startedAt) }))
   });
 });
 
