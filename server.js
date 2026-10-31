@@ -38,6 +38,22 @@ const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_JSON_BYTES });
 
 const bridges = new Map();
 const pending = new Map();
+// One active command per Bridge. Queued commands start only after a confirmed result.
+const bridgeQueues = new Map();
+const uncertainBridges = new Map();
+function serializeBridge(bridgeId, action) {
+  const previous = bridgeQueues.get(bridgeId) || Promise.resolve();
+  const current = previous.catch(() => {}).then(() => {
+    const uncertain = uncertainBridges.get(bridgeId);
+    if (uncertain) throw new Error(`Bridge execution uncertain: ${uncertain}. Further commands are blocked to prevent overlap.`);
+    return action();
+  });
+  const tail = current.catch(() => {});
+  bridgeQueues.set(bridgeId, tail);
+  tail.then(() => { if (bridgeQueues.get(bridgeId) === tail) bridgeQueues.delete(bridgeId); });
+  return current;
+}
+
 
 const nowIso = () => new Date().toISOString();
 
@@ -112,11 +128,13 @@ async function executeBridge(tool, args = {}, requestedBridgeId = "", requestIdO
   const bridge = selectBridge(String(requestedBridgeId || ""));
   const startedAt = performance.now();
 
+  return serializeBridge(bridge.bridgeId, async () => {
   const bridgeResponse = await new Promise((resolve, reject) => {
     const timeoutMs = timeoutForTool(cleanTool);
     const timeout = setTimeout(() => {
       pending.delete(requestId);
-      reject(new Error(`Bridge timeout after ${timeoutMs} ms for ${cleanTool}`));
+      uncertainBridges.set(bridge.bridgeId, `request ${requestId} (${cleanTool}) timed out`);
+      reject(new Error(`Bridge timeout after ${timeoutMs} ms for ${cleanTool}; execution state uncertain, subsequent commands blocked`));
     }, timeoutMs);
 
     pending.set(requestId, {
@@ -149,6 +167,7 @@ async function executeBridge(tool, args = {}, requestedBridgeId = "", requestIdO
     gatewayRoundTripMs: Math.round((performance.now() - startedAt) * 1000) / 1000,
     bridgeResponse
   };
+  });
 }
 
 function mcpResult(envelope) {
@@ -408,7 +427,11 @@ wss.on("connection", ws => {
     if (msg?.type === "result") {
       const requestId = String(msg.requestId || "");
       const waiter = pending.get(requestId);
-      if (!waiter) return;
+      if (!waiter) {
+        const uncertain = uncertainBridges.get(ws.bridgeId);
+        if (uncertain && uncertain.includes(requestId)) uncertainBridges.delete(ws.bridgeId);
+        return;
+      }
 
       clearTimeout(waiter.timeout);
       pending.delete(requestId);
