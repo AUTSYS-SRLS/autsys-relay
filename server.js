@@ -87,7 +87,8 @@ function rejectPendingForBridge(bridgeId, reason) {
     if (item.bridgeId === bridgeId) {
       clearTimeout(item.timeout);
       pending.delete(requestId);
-      item.reject(new Error(reason));
+      uncertainBridges.set(bridgeId, "Interrupted request " + requestId + ": " + reason);
+      item.reject(new Error(reason + " Execution outcome uncertain; further commands blocked."));
     }
   }
 }
