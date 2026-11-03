@@ -15,11 +15,14 @@ const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 30000);
 const LONG_REQUEST_TIMEOUT_MS = Number(process.env.LONG_REQUEST_TIMEOUT_MS || 300000);
 const WRITE_REQUEST_TIMEOUT_MS = Number(process.env.WRITE_REQUEST_TIMEOUT_MS || 60000);
 const SQLITE_REQUEST_TIMEOUT_MS = Number(process.env.SQLITE_REQUEST_TIMEOUT_MS || 120000);
+// SQLite may still hold the local write until its own busy-timeout expires;
+// the gateway deadline must be LONGER than the local SQLite timeout.
+const SQLITE_WRITE_TIMEOUT_MS = Number(process.env.SQLITE_WRITE_TIMEOUT_MS || (SQLITE_REQUEST_TIMEOUT_MS + 15000));
 
 function timeoutForTool(tool) {
   if (["fs.delete","fs.copy","fs.replace","fs.move_path","fs.hash_tree","fs.compare","fs.tree","fs.search_text","fs.zip","fs.unzip","bridge.update.apply","pg.roberta.migrate"].includes(tool)) return LONG_REQUEST_TIMEOUT_MS;
   if (tool === "sqlite.query") return SQLITE_REQUEST_TIMEOUT_MS;
-  if (tool === "sqlite.execute") return WRITE_REQUEST_TIMEOUT_MS;
+  if (tool === "sqlite.execute") return Math.max(SQLITE_WRITE_TIMEOUT_MS, WRITE_REQUEST_TIMEOUT_MS);
   if (tool === "pg.roberta.write") return WRITE_REQUEST_TIMEOUT_MS;
   return REQUEST_TIMEOUT_MS;
 }
