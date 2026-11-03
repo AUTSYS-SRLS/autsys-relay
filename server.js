@@ -41,11 +41,29 @@ const pending = new Map();
 // One active command per Bridge. Queued commands start only after a confirmed result.
 const bridgeQueues = new Map();
 const uncertainBridges = new Map();
-function serializeBridge(bridgeId, action) {
+// Read-only timeouts are isolated failures: they must NEVER poison the whole Bridge.
+// A timed-out mutation remains uncertain until its result is acknowledged.
+const NONBLOCKING_READ_TOOLS = new Set([
+  "health", "fs.list", "fs.find", "fs.read_text", "fs.read_lines",
+  "fs.exists", "fs.stat", "fs.drives", "fs.hash", "fs.hash_tree",
+  "fs.compare", "fs.tree", "fs.search_text", "fs.read_binary",
+  "process.list", "process.discover", "process.status", "process.job_status",
+  "sqlite.query", "pg.roberta.query"
+]);
+const EXPENSIVE_READ_TOOLS = new Set(["fs.find", "fs.search_text", "fs.tree", "fs.hash_tree"]);
+const READ_COOLDOWN_MS = 30000;
+const readCooldowns = new Map();
+function serializeBridge(bridgeId, action, tool) {
   const previous = bridgeQueues.get(bridgeId) || Promise.resolve();
   const current = previous.catch(() => {}).then(() => {
     const uncertain = uncertainBridges.get(bridgeId);
     if (uncertain) throw new Error(`Bridge execution uncertain: ${uncertain}. Further commands are blocked to prevent overlap.`);
+    const cooldownKey = bridgeId + ":" + tool;
+    const cooldownUntil = readCooldowns.get(cooldownKey) || 0;
+    if (cooldownUntil > Date.now()) {
+      throw new Error(`${tool} temporarily unavailable after a read timeout; other Bridge operations remain available.`);
+    }
+    if (cooldownUntil) readCooldowns.delete(cooldownKey);
     return action();
   });
   const tail = current.catch(() => {});
@@ -87,8 +105,15 @@ function rejectPendingForBridge(bridgeId, reason) {
     if (item.bridgeId === bridgeId) {
       clearTimeout(item.timeout);
       pending.delete(requestId);
-      uncertainBridges.set(bridgeId, "Interrupted request " + requestId + ": " + reason);
-      item.reject(new Error(reason + " Execution outcome uncertain; further commands blocked."));
+      if (!NONBLOCKING_READ_TOOLS.has(item.tool)) {
+        uncertainBridges.set(bridgeId, "Interrupted request " + requestId + ": " + reason);
+      } else {
+        if (EXPENSIVE_READ_TOOLS.has(item.tool)) readCooldowns.set(bridgeId + ":" + item.tool, Date.now() + READ_COOLDOWN_MS);
+        console.warn("Read-only request interrupted without global lock:", item.tool, requestId, reason);
+      }
+      item.reject(new Error(reason + (NONBLOCKING_READ_TOOLS.has(item.tool)
+        ? " Read-only request failed; other commands remain available."
+        : " Execution outcome uncertain; further commands blocked.")));
     }
   }
 }
@@ -134,8 +159,16 @@ async function executeBridge(tool, args = {}, requestedBridgeId = "", requestIdO
     const timeoutMs = timeoutForTool(cleanTool);
     const timeout = setTimeout(() => {
       pending.delete(requestId);
-      uncertainBridges.set(bridge.bridgeId, `request ${requestId} (${cleanTool}) timed out`);
-      reject(new Error(`Bridge timeout after ${timeoutMs} ms for ${cleanTool}; execution state uncertain, subsequent commands blocked`));
+      if (NONBLOCKING_READ_TOOLS.has(cleanTool)) {
+        if (EXPENSIVE_READ_TOOLS.has(cleanTool)) {
+          readCooldowns.set(bridge.bridgeId + ":" + cleanTool, Date.now() + READ_COOLDOWN_MS);
+        }
+        console.warn("Read-only Bridge timeout (NOT a global lock):", cleanTool, requestId);
+        reject(new Error(`Bridge read-only timeout after ${timeoutMs} ms for ${cleanTool}; only this request failed`));
+      } else {
+        uncertainBridges.set(bridge.bridgeId, `request ${requestId} (${cleanTool}) timed out`);
+        reject(new Error(`Bridge timeout after ${timeoutMs} ms for ${cleanTool}; execution state uncertain, subsequent commands blocked`));
+      }
     }, timeoutMs);
 
     pending.set(requestId, {
@@ -143,7 +176,8 @@ async function executeBridge(tool, args = {}, requestedBridgeId = "", requestIdO
       reject,
       timeout,
       startedAt,
-      bridgeId: bridge.bridgeId
+      bridgeId: bridge.bridgeId,
+      tool: cleanTool
     });
 
     try {
@@ -168,7 +202,7 @@ async function executeBridge(tool, args = {}, requestedBridgeId = "", requestIdO
     gatewayRoundTripMs: Math.round((performance.now() - startedAt) * 1000) / 1000,
     bridgeResponse
   };
-  });
+  }, cleanTool);
 }
 
 function mcpResult(envelope) {
@@ -293,6 +327,8 @@ app.get("/api/status", requireControl, (_req, res) => {
     })),
     pendingRequests: pending.size,
     uncertainBridges: [...uncertainBridges.entries()].map(([bridgeId, reason]) => ({ bridgeId, reason })),
+    readCooldowns: [...readCooldowns.entries()].filter(([,until]) => until > Date.now())
+      .map(([toolKey,until]) => ({ toolKey, retryAfterMs: until - Date.now() })),
     pendingDetails: [...pending.entries()].map(([requestId, item]) => ({ requestId, bridgeId: item.bridgeId, elapsedMs: Math.round(performance.now() - item.startedAt) }))
   });
 });
