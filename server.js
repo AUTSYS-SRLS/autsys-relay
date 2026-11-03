@@ -19,6 +19,7 @@ const SQLITE_REQUEST_TIMEOUT_MS = Number(process.env.SQLITE_REQUEST_TIMEOUT_MS |
 function timeoutForTool(tool) {
   if (["fs.delete","fs.copy","fs.replace","fs.move_path","fs.hash_tree","fs.compare","fs.tree","fs.search_text","fs.zip","fs.unzip","bridge.update.apply","pg.roberta.migrate"].includes(tool)) return LONG_REQUEST_TIMEOUT_MS;
   if (tool === "sqlite.query") return SQLITE_REQUEST_TIMEOUT_MS;
+  if (tool === "sqlite.execute") return WRITE_REQUEST_TIMEOUT_MS;
   if (tool === "pg.roberta.write") return WRITE_REQUEST_TIMEOUT_MS;
   return REQUEST_TIMEOUT_MS;
 }
@@ -57,7 +58,11 @@ function serializeBridge(bridgeId, action, tool) {
   const previous = bridgeQueues.get(bridgeId) || Promise.resolve();
   const current = previous.catch(() => {}).then(() => {
     const uncertain = uncertainBridges.get(bridgeId);
-    if (uncertain) throw new Error(`Bridge execution uncertain: ${uncertain}. Further commands are blocked to prevent overlap.`);
+    // A timed-out write must not be blindly replayed, but read-only diagnostics
+    // cannot change its outcome and must remain available to diagnose/recover.
+    if (uncertain && !NONBLOCKING_READ_TOOLS.has(tool)) {
+      throw new Error(`Bridge mutation uncertain: ${uncertain}. Further MUTATIONS are blocked until its outcome is reconciled; read-only diagnostics remain available.`);
+    }
     const cooldownKey = bridgeId + ":" + tool;
     const cooldownUntil = readCooldowns.get(cooldownKey) || 0;
     if (cooldownUntil > Date.now()) {
@@ -113,7 +118,7 @@ function rejectPendingForBridge(bridgeId, reason) {
       }
       item.reject(new Error(reason + (NONBLOCKING_READ_TOOLS.has(item.tool)
         ? " Read-only request failed; other commands remain available."
-        : " Execution outcome uncertain; further commands blocked.")));
+        : " Write outcome uncertain; new mutations blocked until reconciliation. Read-only diagnostics remain available.")));
     }
   }
 }
@@ -167,7 +172,11 @@ async function executeBridge(tool, args = {}, requestedBridgeId = "", requestIdO
         reject(new Error(`Bridge read-only timeout after ${timeoutMs} ms for ${cleanTool}; only this request failed`));
       } else {
         uncertainBridges.set(bridge.bridgeId, `request ${requestId} (${cleanTool}) timed out`);
-        reject(new Error(`Bridge timeout after ${timeoutMs} ms for ${cleanTool}; execution state uncertain, subsequent commands blocked`));
+        console.error("UNCERTAIN_BRIDGE_MUTATION", JSON.stringify({
+          bridgeId: bridge.bridgeId, requestId, tool: cleanTool, timeoutMs,
+          readOnlyDiagnosticsAvailable: true, at: nowIso()
+        }));
+        reject(new Error(`Bridge write timeout after ${timeoutMs} ms for ${cleanTool}; outcome uncertain. New mutations blocked pending reconciliation; read-only diagnostics remain available.`));
       }
     }, timeoutMs);
 
@@ -468,7 +477,12 @@ wss.on("connection", ws => {
       const waiter = pending.get(requestId);
       if (!waiter) {
         const uncertain = uncertainBridges.get(ws.bridgeId);
-        if (uncertain && uncertain.includes(requestId)) uncertainBridges.delete(ws.bridgeId);
+        if (uncertain && uncertain.includes(requestId)) {
+          uncertainBridges.delete(ws.bridgeId);
+          console.info("UNCERTAIN_BRIDGE_MUTATION_RESOLVED", JSON.stringify({
+            bridgeId: ws.bridgeId, requestId, responseOk: Boolean(msg.ok), at: nowIso()
+          }));
+        }
         return;
       }
 
