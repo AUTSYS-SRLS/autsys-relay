@@ -1,0 +1,19 @@
+name: Gateway diagnostics syntax
+on:
+  push:
+    branches: [diagnostics-command-ledger-20261106]
+  pull_request:
+    branches: [pc-bridge-gateway]
+  workflow_dispatch:
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --ignore-scripts --no-audit --no-fund
+      - run: node --check server.js
+      - run: node --check mcp-full-front-v3.js
+      - run: node --check launcher.js

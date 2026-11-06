@@ -651,6 +651,17 @@ const wi = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, 
 const wr = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
 const de = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false };
 
+async function readGatewayCommandDiagnostics(limit = 100, bridgeId = "") {
+  const query = new URLSearchParams({ limit: String(Math.max(1, Math.min(500, limit))) });
+  if (bridgeId) query.set("bridgeId", bridgeId);
+  const response = await fetch(`http://127.0.0.1:${BACKEND_PORT}/api/diagnostics/commands?${query}`, {
+    headers: { authorization: `Bearer ${CONTROL_TOKEN}` },
+    signal: AbortSignal.timeout(5000)
+  });
+  if (!response.ok) throw new Error(`Gateway diagnostics HTTP ${response.status}`);
+  return response.json();
+}
+
 function buildMcp() {
   const mcp = new McpServer(
     { name: "AUTSYS PC BRIDGE", version: VERSION },
@@ -658,6 +669,16 @@ function buildMcp() {
       instructions: "Use the compact AUTSYS tool surface. At conversation start, if the chat belongs to a specific project, call autsys_bootstrap with scope PROJECT and the exact current project name; do not call GENERAL first. If the chat is general, call autsys_bootstrap with scope GENERAL. Bootstrap is ONCE PER CONVERSATION unless the user explicitly asks to reload/re-bootstrap or the project changes. Local read access is broader than mutation access: filesystem_read and sqlite_read may read any local volume allowed by the Bridge read policy; filesystem_write, filesystem_manage, filesystem_delete and process_control may mutate or execute only inside AUTHORIZED_ROOTS. ROBERTA has no special filesystem privilege. Use sqlite_read for local SQLite collectors/history, project_db_read/project_db_change/project_db_delete for AUTSYS_PROJECT.sqlite, and project_handoff for handoffs. Never reconstruct configuration from event/tick tables when an authoritative registry/configuration source exists. The legacy pc_execute and old individual tools are compatibility fallbacks and should not be used when a compact typed family is available."
     }
   );
+
+  mcp.registerTool("gateway_command_diagnostics", {
+    title: "Render gateway command diagnostics",
+    description: "Read command lifecycle, pending queue and uncertain outcomes directly from Render, without contacting the Windows Bridge.",
+    inputSchema: z.object({
+      limit: z.number().int().min(1).max(500).optional(),
+      bridgeId: z.string().optional()
+    }),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  }, async ({ limit, bridgeId }) => jsonResult(await readGatewayCommandDiagnostics(limit || 100, bridgeId || "")));
 
 
   // Direct, read-only SQLite entry, deliberately early in the MCP catalog.

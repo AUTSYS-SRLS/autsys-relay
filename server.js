@@ -5,6 +5,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
+import { createClient } from "redis";
 
 const VERSION = "0.1.0.14";
 const INSTANCE_ID = crypto.randomUUID();
@@ -42,6 +43,85 @@ const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_JSON_BYTES });
 
 const bridges = new Map();
 const pending = new Map();
+// Durable, isolated diagnostics namespace in the existing Frankfurt Render Key Value store.
+const DIAG_PREFIX = "autsys:pc-bridge:diagnostics:v1:";
+const DIAG_REDIS_ID = "red-dbacgfijnfac73f6qnb0";
+let diagRedis = null;
+let diagReady = false;
+let diagLastError = null;
+let diagWriteTail = Promise.resolve();
+async function connectDiagnostics() {
+  if (!process.env.RENDER_API_KEY) {
+    diagLastError = "RENDER_API_KEY_MISSING";
+    return;
+  }
+  try {
+    const response = await fetch("https://api.render.com/v1/key-value/" + DIAG_REDIS_ID + "/connection-info", {
+      headers: { authorization: "Bearer " + process.env.RENDER_API_KEY },
+      signal: AbortSignal.timeout(10000)
+    });
+    if (!response.ok) throw new Error("CONNECTION_INFO_UNAVAILABLE");
+    const info = await response.json();
+    const url = info.internalConnectionString;
+    if (!url) throw new Error("CONNECTION_STRING_UNAVAILABLE");
+    const host = new URL(url).hostname;
+    if (host !== DIAG_REDIS_ID && !host.startsWith(DIAG_REDIS_ID + "."))
+      throw new Error("UNEXPECTED_REDIS_HOST");
+    diagRedis = createClient({ url, disableOfflineQueue: true, socket: { connectTimeout: 5000, reconnectStrategy: false } });
+    diagRedis.on("error", () => { diagReady = false; diagLastError = "REDIS_CONNECTION_ERROR"; });
+    await diagRedis.connect();
+    diagReady = true;
+    diagLastError = null;
+    const unresolved = await diagRedis.hGetAll(DIAG_PREFIX + "active");
+    for (const [id, raw] of Object.entries(unresolved)) {
+      let item;
+      try { item = JSON.parse(raw); } catch { continue; }
+      const recovery = { ...item, at: nowIso(), state: "OUTCOME_UNCERTAIN_AFTER_RESTART", recovered: true };
+      await diagRedis.rPush(DIAG_PREFIX + "events", JSON.stringify(recovery));
+      await diagRedis.hSet(DIAG_PREFIX + "latest", id, JSON.stringify(recovery));
+      await diagRedis.hDel(DIAG_PREFIX + "active", id);
+      if (item.bridgeId && !NONBLOCKING_READ_TOOLS.has(item.tool))
+        uncertainBridges.set(item.bridgeId, "Unreconciled request after gateway restart: " + id);
+    }
+  } catch (_) {
+    diagReady = false;
+    diagLastError = "PERSISTENCE_CONNECT_FAILED";
+  }
+}
+function persistCommandEvent(event) {
+  diagWriteTail = diagWriteTail.catch(() => {}).then(async () => {
+    if (!diagReady || !diagRedis) return;
+    try {
+      const key = DIAG_PREFIX;
+      const active = ["QUEUED", "DISPATCHED"].includes(event.state);
+      const multi = diagRedis.multi()
+        .rPush(key + "events", JSON.stringify(event))
+        .hSet(key + "latest", event.requestId, JSON.stringify(event));
+      if (active) multi.hSet(key + "active", event.requestId, JSON.stringify(event));
+      else multi.hDel(key + "active", event.requestId);
+      await multi.exec();
+    } catch (_) {
+      diagLastError = "PERSISTENCE_WRITE_FAILED";
+    }
+  });
+}
+
+// Bounded in-memory diagnostics. Persistent audit storage is a separate rollout.
+const commandHistory = [];
+const commandStates = new Map();
+const COMMAND_HISTORY_LIMIT = 1000;
+function commandEvent(requestId, bridgeId, tool, state, details = {}) {
+  const event = { at: new Date().toISOString(), requestId, bridgeId, tool, state, ...details };
+  commandHistory.push(event);
+  if (commandHistory.length > COMMAND_HISTORY_LIMIT) commandHistory.shift();
+  commandStates.set(requestId, event);
+  if (commandStates.size > COMMAND_HISTORY_LIMIT) {
+    commandStates.delete(commandStates.keys().next().value);
+  }
+  console.info("BRIDGE_COMMAND_LIFECYCLE", JSON.stringify(event));
+  persistCommandEvent(event);
+}
+
 // One active command per Bridge. Queued commands start only after a confirmed result.
 const bridgeQueues = new Map();
 const uncertainBridges = new Map();
@@ -119,6 +199,9 @@ function rejectPendingForBridge(bridgeId, reason) {
         if (EXPENSIVE_READ_TOOLS.has(item.tool)) readCooldowns.set(bridgeId + ":" + item.tool, Date.now() + READ_COOLDOWN_MS);
         console.warn("Read-only request interrupted without global lock:", item.tool, requestId, reason);
       }
+      commandEvent(requestId, bridgeId, item.tool,
+        NONBLOCKING_READ_TOOLS.has(item.tool) ? "READ_INTERRUPTED" : "OUTCOME_UNCERTAIN",
+        { errorCode: "BRIDGE_DISCONNECTED" });
       item.reject(new Error(reason + (NONBLOCKING_READ_TOOLS.has(item.tool)
         ? " Read-only request failed; other commands remain available."
         : " Write outcome uncertain; new mutations blocked until reconciliation. Read-only diagnostics remain available.")));
@@ -161,11 +244,15 @@ async function executeBridge(tool, args = {}, requestedBridgeId = "", requestIdO
 
   const bridge = selectBridge(String(requestedBridgeId || ""));
   const startedAt = performance.now();
+  commandEvent(requestId, bridge.bridgeId, cleanTool, "QUEUED");
 
   return serializeBridge(bridge.bridgeId, async () => {
   const bridgeResponse = await new Promise((resolve, reject) => {
     const timeoutMs = timeoutForTool(cleanTool);
     const timeout = setTimeout(() => {
+      commandEvent(requestId, bridge.bridgeId, cleanTool,
+        NONBLOCKING_READ_TOOLS.has(cleanTool) ? "READ_TIMEOUT" : "OUTCOME_UNCERTAIN",
+        { timeoutMs });
       pending.delete(requestId);
       if (NONBLOCKING_READ_TOOLS.has(cleanTool)) {
         if (EXPENSIVE_READ_TOOLS.has(cleanTool)) {
@@ -193,6 +280,7 @@ async function executeBridge(tool, args = {}, requestedBridgeId = "", requestIdO
     });
 
     try {
+      commandEvent(requestId, bridge.bridgeId, cleanTool, "DISPATCHED");
       sendJson(bridge.ws, {
         type: "execute",
         protocolVersion: "1",
@@ -203,6 +291,8 @@ async function executeBridge(tool, args = {}, requestedBridgeId = "", requestIdO
     } catch (err) {
       clearTimeout(timeout);
       pending.delete(requestId);
+      commandEvent(requestId, bridge.bridgeId, cleanTool, "DISPATCH_FAILED",
+        { errorCode: "WEBSOCKET_SEND_ERROR" });
       reject(err);
     }
   });
@@ -214,7 +304,11 @@ async function executeBridge(tool, args = {}, requestedBridgeId = "", requestIdO
     gatewayRoundTripMs: Math.round((performance.now() - startedAt) * 1000) / 1000,
     bridgeResponse
   };
-  }, cleanTool);
+  }, cleanTool).catch(err => {
+    commandEvent(requestId, bridge.bridgeId, cleanTool, "REJECTED_BEFORE_DISPATCH",
+      { errorCode: "SERIALIZATION_OR_SAFETY_REJECTION" });
+    throw err;
+  });
 }
 
 function mcpResult(envelope) {
@@ -342,6 +436,32 @@ app.get("/api/status", requireControl, (_req, res) => {
     readCooldowns: [...readCooldowns.entries()].filter(([,until]) => until > Date.now())
       .map(([toolKey,until]) => ({ toolKey, retryAfterMs: until - Date.now() })),
     pendingDetails: [...pending.entries()].map(([requestId, item]) => ({ requestId, bridgeId: item.bridgeId, elapsedMs: Math.round(performance.now() - item.startedAt) }))
+  });
+});
+
+app.get("/api/diagnostics/commands", requireControl, async (req, res) => {
+  const limit = Math.max(1, Math.min(500, Number(req.query.limit) || 100));
+  const bridgeId = String(req.query.bridgeId || "");
+  const events = bridgeId ? commandHistory.filter(e => e.bridgeId === bridgeId) : commandHistory;
+  const queued = events.filter(e => e.state === "QUEUED").length;
+  res.setHeader("Cache-Control", "no-store");
+  let persistedEvents = [];
+  if (diagReady) {
+    try { persistedEvents = (await diagRedis.lRange(DIAG_PREFIX + "events", -limit, -1)).map(x => JSON.parse(x)).filter(e => !bridgeId || e.bridgeId === bridgeId); }
+    catch (_) { diagLastError = "PERSISTENCE_READ_FAILED"; }
+  }
+  res.json({
+    ok: true, instanceId: INSTANCE_ID, utc: nowIso(),
+    persistence: diagReady ? "RENDER_KEY_VALUE_JOURNAL_SNAPSHOT" : "UNAVAILABLE",
+    persistenceError: diagLastError,
+    activePending: [...pending.entries()].map(([requestId, p]) => ({
+      requestId, bridgeId: p.bridgeId, tool: p.tool,
+      elapsedMs: Math.round(performance.now() - p.startedAt)
+    })),
+    bridgeQueueSlots: [...bridgeQueues.keys()],
+    uncertainBridges: [...uncertainBridges.entries()].map(([id, reason]) => ({ bridgeId: id, reason })),
+    eventCount: events.length, queuedSinceProcessStart: queued,
+    events: events.slice(-limit), persistedEvents
   });
 });
 
@@ -479,6 +599,9 @@ wss.on("connection", ws => {
       const requestId = String(msg.requestId || "");
       const waiter = pending.get(requestId);
       if (!waiter) {
+        const old = commandStates.get(requestId);
+        if (old) commandEvent(requestId, ws.bridgeId, old.tool, "LATE_RESULT",
+          { responseOk: Boolean(msg.ok) });
         const uncertain = uncertainBridges.get(ws.bridgeId);
         if (uncertain && uncertain.includes(requestId)) {
           uncertainBridges.delete(ws.bridgeId);
@@ -491,6 +614,9 @@ wss.on("connection", ws => {
 
       clearTimeout(waiter.timeout);
       pending.delete(requestId);
+      commandEvent(requestId, ws.bridgeId, waiter.tool,
+        msg.ok ? "SUCCEEDED" : "FAILED",
+        { elapsedMs: Math.round(performance.now() - waiter.startedAt) });
       waiter.resolve(msg);
 
       if (ws.bridgeId && bridges.has(ws.bridgeId)) {
@@ -536,6 +662,7 @@ const heartbeatTimer = setInterval(() => {
 
 heartbeatTimer.unref();
 
+void connectDiagnostics();
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`AUTSYS PC BRIDGE GATEWAY ${VERSION} listening on ${PORT}`);
   console.log("MCP endpoint ready at /mcp");
