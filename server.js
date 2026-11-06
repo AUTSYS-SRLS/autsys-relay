@@ -96,6 +96,7 @@ function persistCommandEvent(event) {
       const active = ["QUEUED", "DISPATCHED"].includes(event.state);
       const multi = diagRedis.multi()
         .rPush(key + "events", JSON.stringify(event))
+        .lTrim(key + "events", -10000, -1)
         .hSet(key + "latest", event.requestId, JSON.stringify(event));
       if (active) multi.hSet(key + "active", event.requestId, JSON.stringify(event));
       else multi.hDel(key + "active", event.requestId);
@@ -124,6 +125,8 @@ function commandEvent(requestId, bridgeId, tool, state, details = {}) {
 
 // One active command per Bridge. Queued commands start only after a confirmed result.
 const bridgeQueues = new Map();
+const bridgeQueueDepth = new Map();
+const dispatchTimes = new Map();
 const uncertainBridges = new Map();
 // Read-only timeouts are isolated failures: they must NEVER poison the whole Bridge.
 // A timed-out mutation remains uncertain until its result is acknowledged.
@@ -139,6 +142,7 @@ const READ_COOLDOWN_MS = 30000;
 const readCooldowns = new Map();
 function serializeBridge(bridgeId, action, tool) {
   const previous = bridgeQueues.get(bridgeId) || Promise.resolve();
+  bridgeQueueDepth.set(bridgeId, (bridgeQueueDepth.get(bridgeId) || 0) + 1);
   const current = previous.catch(() => {}).then(() => {
     const uncertain = uncertainBridges.get(bridgeId);
     // A timed-out write must not be blindly replayed, but read-only diagnostics
@@ -154,7 +158,11 @@ function serializeBridge(bridgeId, action, tool) {
     if (cooldownUntil) readCooldowns.delete(cooldownKey);
     return action();
   });
-  const tail = current.catch(() => {});
+  const tail = current.catch(() => {}).finally(() => {
+    const remaining = (bridgeQueueDepth.get(bridgeId) || 1) - 1;
+    if (remaining > 0) bridgeQueueDepth.set(bridgeId, remaining);
+    else bridgeQueueDepth.delete(bridgeId);
+  });
   bridgeQueues.set(bridgeId, tail);
   tail.then(() => { if (bridgeQueues.get(bridgeId) === tail) bridgeQueues.delete(bridgeId); });
   return current;
@@ -244,15 +252,24 @@ async function executeBridge(tool, args = {}, requestedBridgeId = "", requestIdO
 
   const bridge = selectBridge(String(requestedBridgeId || ""));
   const startedAt = performance.now();
-  commandEvent(requestId, bridge.bridgeId, cleanTool, "QUEUED");
+  commandEvent(requestId, bridge.bridgeId, cleanTool, "QUEUED", {
+    queueDepthAtArrival: bridgeQueueDepth.get(bridge.bridgeId) || 0,
+    pendingAtArrival: pending.size
+  });
 
+  let dispatched = false;
   return serializeBridge(bridge.bridgeId, async () => {
+  commandEvent(requestId, bridge.bridgeId, cleanTool, "QUEUE_EXIT", {
+    queueWaitMs: Math.round(performance.now() - startedAt),
+    queueDepth: bridgeQueueDepth.get(bridge.bridgeId) || 0
+  });
   const bridgeResponse = await new Promise((resolve, reject) => {
     const timeoutMs = timeoutForTool(cleanTool);
     const timeout = setTimeout(() => {
       commandEvent(requestId, bridge.bridgeId, cleanTool,
         NONBLOCKING_READ_TOOLS.has(cleanTool) ? "READ_TIMEOUT" : "OUTCOME_UNCERTAIN",
-        { timeoutMs });
+        { timeoutMs, phase: "AWAITING_WINDOWS_RESULT", elapsedMs: Math.round(performance.now() - startedAt),
+          queueDepth: bridgeQueueDepth.get(bridge.bridgeId) || 0, activePending: pending.size });
       pending.delete(requestId);
       if (NONBLOCKING_READ_TOOLS.has(cleanTool)) {
         if (EXPENSIVE_READ_TOOLS.has(cleanTool)) {
@@ -280,7 +297,13 @@ async function executeBridge(tool, args = {}, requestedBridgeId = "", requestIdO
     });
 
     try {
-      commandEvent(requestId, bridge.bridgeId, cleanTool, "DISPATCHED");
+      dispatched = true;
+      dispatchTimes.set(requestId, Date.now());
+      if (dispatchTimes.size > COMMAND_HISTORY_LIMIT) dispatchTimes.delete(dispatchTimes.keys().next().value);
+      commandEvent(requestId, bridge.bridgeId, cleanTool, "DISPATCHED", {
+        queueWaitMs: Math.round(performance.now() - startedAt),
+        websocketBufferedBytes: bridge.ws.bufferedAmount || 0
+      });
       sendJson(bridge.ws, {
         type: "execute",
         protocolVersion: "1",
@@ -305,7 +328,7 @@ async function executeBridge(tool, args = {}, requestedBridgeId = "", requestIdO
     bridgeResponse
   };
   }, cleanTool).catch(err => {
-    commandEvent(requestId, bridge.bridgeId, cleanTool, "REJECTED_BEFORE_DISPATCH",
+    if (!dispatched) commandEvent(requestId, bridge.bridgeId, cleanTool, "REJECTED_BEFORE_DISPATCH",
       { errorCode: "SERIALIZATION_OR_SAFETY_REJECTION" });
     throw err;
   });
@@ -432,6 +455,7 @@ app.get("/api/status", requireControl, (_req, res) => {
       meta: item.meta
     })),
     pendingRequests: pending.size,
+    bridgeQueueDepth: Object.fromEntries(bridgeQueueDepth),
     uncertainBridges: [...uncertainBridges.entries()].map(([bridgeId, reason]) => ({ bridgeId, reason })),
     readCooldowns: [...readCooldowns.entries()].filter(([,until]) => until > Date.now())
       .map(([toolKey,until]) => ({ toolKey, retryAfterMs: until - Date.now() })),
@@ -601,7 +625,8 @@ wss.on("connection", ws => {
       if (!waiter) {
         const old = commandStates.get(requestId);
         if (old) commandEvent(requestId, ws.bridgeId, old.tool, "LATE_RESULT",
-          { responseOk: Boolean(msg.ok) });
+          { responseOk: Boolean(msg.ok), elapsedSinceDispatchMs: dispatchTimes.has(requestId) ? Date.now() - dispatchTimes.get(requestId) : null });
+        dispatchTimes.delete(requestId);
         const uncertain = uncertainBridges.get(ws.bridgeId);
         if (uncertain && uncertain.includes(requestId)) {
           uncertainBridges.delete(ws.bridgeId);
@@ -614,6 +639,7 @@ wss.on("connection", ws => {
 
       clearTimeout(waiter.timeout);
       pending.delete(requestId);
+      dispatchTimes.delete(requestId);
       commandEvent(requestId, ws.bridgeId, waiter.tool,
         msg.ok ? "SUCCEEDED" : "FAILED",
         { elapsedMs: Math.round(performance.now() - waiter.startedAt) });
