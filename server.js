@@ -304,7 +304,11 @@ async function executeBridge(tool, args = {}, requestedBridgeId = "", requestIdO
     gatewayRoundTripMs: Math.round((performance.now() - startedAt) * 1000) / 1000,
     bridgeResponse
   };
-  }, cleanTool);
+  }, cleanTool).catch(err => {
+    commandEvent(requestId, bridge.bridgeId, cleanTool, "REJECTED_BEFORE_DISPATCH",
+      { errorCode: "SERIALIZATION_OR_SAFETY_REJECTION" });
+    throw err;
+  });
 }
 
 function mcpResult(envelope) {
@@ -443,7 +447,7 @@ app.get("/api/diagnostics/commands", requireControl, async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   let persistedEvents = [];
   if (diagReady) {
-    try { persistedEvents = (await diagRedis.lRange(DIAG_PREFIX + "events", -limit, -1)).map(x => JSON.parse(x)); }
+    try { persistedEvents = (await diagRedis.lRange(DIAG_PREFIX + "events", -limit, -1)).map(x => JSON.parse(x)).filter(e => !bridgeId || e.bridgeId === bridgeId); }
     catch (_) { diagLastError = "PERSISTENCE_READ_FAILED"; }
   }
   res.json({
