@@ -42,6 +42,21 @@ const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_JSON_BYTES });
 
 const bridges = new Map();
 const pending = new Map();
+// Bounded in-memory diagnostics. Persistent audit storage is a separate rollout.
+const commandHistory = [];
+const commandStates = new Map();
+const COMMAND_HISTORY_LIMIT = 1000;
+function commandEvent(requestId, bridgeId, tool, state, details = {}) {
+  const event = { at: new Date().toISOString(), requestId, bridgeId, tool, state, ...details };
+  commandHistory.push(event);
+  if (commandHistory.length > COMMAND_HISTORY_LIMIT) commandHistory.shift();
+  commandStates.set(requestId, event);
+  if (commandStates.size > COMMAND_HISTORY_LIMIT) {
+    commandStates.delete(commandStates.keys().next().value);
+  }
+  console.info("BRIDGE_COMMAND_LIFECYCLE", JSON.stringify(event));
+}
+
 // One active command per Bridge. Queued commands start only after a confirmed result.
 const bridgeQueues = new Map();
 const uncertainBridges = new Map();
@@ -119,6 +134,9 @@ function rejectPendingForBridge(bridgeId, reason) {
         if (EXPENSIVE_READ_TOOLS.has(item.tool)) readCooldowns.set(bridgeId + ":" + item.tool, Date.now() + READ_COOLDOWN_MS);
         console.warn("Read-only request interrupted without global lock:", item.tool, requestId, reason);
       }
+      commandEvent(requestId, bridgeId, item.tool,
+        NONBLOCKING_READ_TOOLS.has(item.tool) ? "READ_INTERRUPTED" : "OUTCOME_UNCERTAIN",
+        { errorCode: "BRIDGE_DISCONNECTED" });
       item.reject(new Error(reason + (NONBLOCKING_READ_TOOLS.has(item.tool)
         ? " Read-only request failed; other commands remain available."
         : " Write outcome uncertain; new mutations blocked until reconciliation. Read-only diagnostics remain available.")));
@@ -161,11 +179,15 @@ async function executeBridge(tool, args = {}, requestedBridgeId = "", requestIdO
 
   const bridge = selectBridge(String(requestedBridgeId || ""));
   const startedAt = performance.now();
+  commandEvent(requestId, bridge.bridgeId, cleanTool, "QUEUED");
 
   return serializeBridge(bridge.bridgeId, async () => {
   const bridgeResponse = await new Promise((resolve, reject) => {
     const timeoutMs = timeoutForTool(cleanTool);
     const timeout = setTimeout(() => {
+      commandEvent(requestId, bridge.bridgeId, cleanTool,
+        NONBLOCKING_READ_TOOLS.has(cleanTool) ? "READ_TIMEOUT" : "OUTCOME_UNCERTAIN",
+        { timeoutMs });
       pending.delete(requestId);
       if (NONBLOCKING_READ_TOOLS.has(cleanTool)) {
         if (EXPENSIVE_READ_TOOLS.has(cleanTool)) {
@@ -193,6 +215,7 @@ async function executeBridge(tool, args = {}, requestedBridgeId = "", requestIdO
     });
 
     try {
+      commandEvent(requestId, bridge.bridgeId, cleanTool, "DISPATCHED");
       sendJson(bridge.ws, {
         type: "execute",
         protocolVersion: "1",
@@ -203,6 +226,8 @@ async function executeBridge(tool, args = {}, requestedBridgeId = "", requestIdO
     } catch (err) {
       clearTimeout(timeout);
       pending.delete(requestId);
+      commandEvent(requestId, bridge.bridgeId, cleanTool, "DISPATCH_FAILED",
+        { errorCode: "WEBSOCKET_SEND_ERROR" });
       reject(err);
     }
   });
@@ -345,6 +370,26 @@ app.get("/api/status", requireControl, (_req, res) => {
   });
 });
 
+app.get("/api/diagnostics/commands", requireControl, (req, res) => {
+  const limit = Math.max(1, Math.min(500, Number(req.query.limit) || 100));
+  const bridgeId = String(req.query.bridgeId || "");
+  const events = bridgeId ? commandHistory.filter(e => e.bridgeId === bridgeId) : commandHistory;
+  const queued = events.filter(e => e.state === "QUEUED").length;
+  res.setHeader("Cache-Control", "no-store");
+  res.json({
+    ok: true, instanceId: INSTANCE_ID, utc: nowIso(),
+    persistence: "MEMORY_ONLY_RESETS_ON_DEPLOY",
+    activePending: [...pending.entries()].map(([requestId, p]) => ({
+      requestId, bridgeId: p.bridgeId, tool: p.tool,
+      elapsedMs: Math.round(performance.now() - p.startedAt)
+    })),
+    bridgeQueueSlots: [...bridgeQueues.keys()],
+    uncertainBridges: [...uncertainBridges.entries()].map(([id, reason]) => ({ bridgeId: id, reason })),
+    eventCount: events.length, queuedSinceProcessStart: queued,
+    events: events.slice(-limit)
+  });
+});
+
 app.post("/api/execute", requireControl, async (req, res) => {
   try {
     const result = await executeBridge(
@@ -479,6 +524,9 @@ wss.on("connection", ws => {
       const requestId = String(msg.requestId || "");
       const waiter = pending.get(requestId);
       if (!waiter) {
+        const old = commandStates.get(requestId);
+        if (old) commandEvent(requestId, ws.bridgeId, old.tool, "LATE_RESULT",
+          { responseOk: Boolean(msg.ok) });
         const uncertain = uncertainBridges.get(ws.bridgeId);
         if (uncertain && uncertain.includes(requestId)) {
           uncertainBridges.delete(ws.bridgeId);
@@ -491,6 +539,9 @@ wss.on("connection", ws => {
 
       clearTimeout(waiter.timeout);
       pending.delete(requestId);
+      commandEvent(requestId, ws.bridgeId, waiter.tool,
+        msg.ok ? "SUCCEEDED" : "FAILED",
+        { elapsedMs: Math.round(performance.now() - waiter.startedAt) });
       waiter.resolve(msg);
 
       if (ws.bridgeId && bridges.has(ws.bridgeId)) {
