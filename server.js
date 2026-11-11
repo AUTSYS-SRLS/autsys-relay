@@ -538,7 +538,7 @@ app.post("/api/diagnostics/reconcile", requireControl, async (req, res) => {
       return res.status(409).json({ ok: false, recorded: true, error: "OTHER_UNCERTAIN_MUTATIONS", requestId: other[0] });
     }
     uncertainBridges.delete(bridgeId);
-    commandEvent(requestId, bridgeId, last.tool, "MANUALLY_RECONCILED", { outcome, verifiedBy });
+    console.info("BRIDGE_MUTATION_RECONCILED", JSON.stringify({ requestId, bridgeId, outcome, verifiedBy, at: record.at }));
     res.json({ ok: true, requestId, bridgeId, outcome, mutationsUnblocked: true });
   } catch (err) {
     res.status(503).json({ ok: false, error: "RECONCILIATION_PERSISTENCE_FAILURE" });
