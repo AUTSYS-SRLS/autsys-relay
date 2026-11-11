@@ -146,7 +146,9 @@ const NONBLOCKING_READ_TOOLS = new Set([
   "fs.exists", "fs.stat", "fs.drives", "fs.hash", "fs.hash_tree",
   "fs.compare", "fs.tree", "fs.search_text", "fs.read_binary",
   "process.list", "process.discover", "process.status", "process.job_status",
-  "sqlite.query", "pg.roberta.query"
+  "sqlite.query", "pg.roberta.query",
+  "desktop.windows.list", "desktop.windows.inspect", "desktop.controls.inspect",
+  "desktop.screen.capture"
 ]);
 const EXPENSIVE_READ_TOOLS = new Set(["fs.find", "fs.search_text", "fs.tree", "fs.hash_tree"]);
 const READ_COOLDOWN_MS = 30000;
