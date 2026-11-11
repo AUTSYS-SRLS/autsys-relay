@@ -72,6 +72,17 @@ async function connectDiagnostics() {
     await diagRedis.connect();
     diagReady = true;
     diagLastError = null;
+    // Restore previously uncertain mutations even if the active set was already cleared.
+    // A gateway restart must never silently unlock writes.
+    const latest = await diagRedis.hGetAll(DIAG_PREFIX + "latest");
+    for (const [id, raw] of Object.entries(latest)) {
+      let item;
+      try { item = JSON.parse(raw); } catch { continue; }
+      if (item.bridgeId && !NONBLOCKING_READ_TOOLS.has(item.tool) &&
+          ["OUTCOME_UNCERTAIN", "OUTCOME_UNCERTAIN_AFTER_RESTART"].includes(item.state)) {
+        uncertainBridges.set(item.bridgeId, "Unreconciled request after gateway restart: " + id);
+      }
+    }
     const unresolved = await diagRedis.hGetAll(DIAG_PREFIX + "active");
     for (const [id, raw] of Object.entries(unresolved)) {
       let item;
