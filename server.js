@@ -489,6 +489,62 @@ app.get("/api/diagnostics/commands", requireControl, async (req, res) => {
   });
 });
 
+// A reconciliation is an audited administrative decision, never a replay of the mutation.
+// Only one exact uncertain request can be resolved; pending work and other uncertainties remain protected.
+app.post("/api/diagnostics/reconcile", requireControl, async (req, res) => {
+  const bridgeId = String(req.body?.bridgeId || "");
+  const requestId = String(req.body?.requestId || "");
+  const evidence = String(req.body?.evidence || "").trim();
+  const verifiedBy = String(req.body?.verifiedBy || "").trim();
+  const outcome = String(req.body?.outcome || "");
+  if (!bridgeId || !/^[0-9a-f]{8}-[0-9a-f-]{27,}$/.test(requestId) ||
+      !["completed", "partially_completed", "not_executed"].includes(outcome) ||
+      evidence.length < 40 || !verifiedBy || evidence.length > 4000) {
+    return res.status(400).json({ ok: false, error: "INVALID_RECONCILIATION_EVIDENCE" });
+  }
+  const reason = uncertainBridges.get(bridgeId);
+  if (!reason || !reason.includes(requestId))
+    return res.status(409).json({ ok: false, error: "UNCERTAIN_REQUEST_MISMATCH" });
+  if ([...pending.values()].some(p => p.bridgeId === bridgeId) ||
+      (bridgeQueueDepth.get(bridgeId) || 0) !== 0)
+    return res.status(409).json({ ok: false, error: "BRIDGE_BUSY" });
+  if (!diagReady || !diagRedis)
+    return res.status(503).json({ ok: false, error: "DURABLE_JOURNAL_UNAVAILABLE" });
+  try {
+    await diagWriteTail;
+    const raw = await diagRedis.hGet(DIAG_PREFIX + "latest", requestId);
+    const last = raw ? JSON.parse(raw) : null;
+    if (!last || last.bridgeId !== bridgeId || NONBLOCKING_READ_TOOLS.has(last.tool) ||
+        !["OUTCOME_UNCERTAIN", "OUTCOME_UNCERTAIN_AFTER_RESTART"].includes(last.state))
+      return res.status(409).json({ ok: false, error: "JOURNAL_DOES_NOT_CONFIRM_UNCERTAINTY" });
+    const record = { at: nowIso(), requestId, bridgeId, tool: last.tool,
+      state: "MANUALLY_RECONCILED", outcome, evidence, verifiedBy };
+    await diagRedis.multi()
+      .rPush(DIAG_PREFIX + "events", JSON.stringify(record))
+      .lTrim(DIAG_PREFIX + "events", -10000, -1)
+      .hSet(DIAG_PREFIX + "latest", requestId, JSON.stringify(record))
+      .hDel(DIAG_PREFIX + "active", requestId)
+      .exec();
+    // Keep protection active if another uncertain mutation exists.
+    const unresolved = await diagRedis.hGetAll(DIAG_PREFIX + "latest");
+    const other = Object.entries(unresolved).find(([id, raw]) => {
+      if (id === requestId) return false;
+      try { const e = JSON.parse(raw); return e.bridgeId === bridgeId &&
+        ["OUTCOME_UNCERTAIN", "OUTCOME_UNCERTAIN_AFTER_RESTART"].includes(e.state); }
+      catch { return true; }
+    });
+    if (other) {
+      uncertainBridges.set(bridgeId, "Unreconciled request: " + other[0]);
+      return res.status(409).json({ ok: false, recorded: true, error: "OTHER_UNCERTAIN_MUTATIONS", requestId: other[0] });
+    }
+    uncertainBridges.delete(bridgeId);
+    commandEvent(requestId, bridgeId, last.tool, "MANUALLY_RECONCILED", { outcome, verifiedBy });
+    res.json({ ok: true, requestId, bridgeId, outcome, mutationsUnblocked: true });
+  } catch (err) {
+    res.status(503).json({ ok: false, error: "RECONCILIATION_PERSISTENCE_FAILURE" });
+  }
+});
+
 app.post("/api/execute", requireControl, async (req, res) => {
   try {
     const result = await executeBridge(
