@@ -94,6 +94,34 @@ async function connectDiagnostics() {
       if (item.bridgeId && !NONBLOCKING_READ_TOOLS.has(item.tool))
         uncertainBridges.set(item.bridgeId, "Unreconciled request after gateway restart: " + id);
     }
+    // One-time, request-specific operator cancellation of a stale uncertainty lock.
+    // This is NOT evidence that the original filesystem operation succeeded or failed.
+    // Never replay the interrupted mutation; preserve the unknown outcome in the audit.
+    const cancelId = String(process.env.AUTSYS_CANCEL_UNCERTAIN_REQUEST || "").trim();
+    if (cancelId && /^[0-9a-f-]{36}$/.test(cancelId)) {
+      const raw = await diagRedis.hGet(DIAG_PREFIX + "latest", cancelId);
+      let item = null;
+      try { item = raw ? JSON.parse(raw) : null; } catch {}
+      if (item && item.bridgeId === "AUTSYS-PC-BRIDGE-DEV" &&
+          ["OUTCOME_UNCERTAIN", "OUTCOME_UNCERTAIN_AFTER_RESTART"].includes(item.state) &&
+          ![...pending.values()].some(p => p.bridgeId === item.bridgeId)) {
+        const record = { ...item, at: nowIso(), state: "OPERATOR_CANCELLED_UNCERTAINTY",
+          outcome: "UNKNOWN_NOT_REPLAYED", verifiedBy: "operator_explicit_request",
+          evidence: "Operator explicitly requested interruption of stale gateway lock. Original mutation outcome remains unknown; no operation replayed." };
+        await diagRedis.multi().rPush(DIAG_PREFIX + "events", JSON.stringify(record))
+          .hSet(DIAG_PREFIX + "latest", cancelId, JSON.stringify(record))
+          .hDel(DIAG_PREFIX + "active", cancelId).exec();
+        const all = await diagRedis.hGetAll(DIAG_PREFIX + "latest");
+        const other = Object.entries(all).find(([id, raw]) => {
+          try { const x = JSON.parse(raw); return x.bridgeId === item.bridgeId &&
+            ["OUTCOME_UNCERTAIN", "OUTCOME_UNCERTAIN_AFTER_RESTART"].includes(x.state); }
+          catch { return false; }
+        });
+        if (other) uncertainBridges.set(item.bridgeId, "Unreconciled request: " + other[0]);
+        else uncertainBridges.delete(item.bridgeId);
+        console.info("BRIDGE_STALE_LOCK_CANCELLED", JSON.stringify({ requestId: cancelId, bridgeId: item.bridgeId, otherUncertain: other?.[0] || null }));
+      }
+    }
   } catch (_) {
     diagReady = false;
     diagLastError = "PERSISTENCE_CONNECT_FAILED";
