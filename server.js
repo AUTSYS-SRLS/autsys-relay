@@ -94,6 +94,33 @@ async function connectDiagnostics() {
       if (item.bridgeId && !NONBLOCKING_READ_TOOLS.has(item.tool))
         uncertainBridges.set(item.bridgeId, "Unreconciled request after gateway restart: " + id);
     }
+    // Repair historical false mutation locks caused by misclassified read-only project.db.query.
+    // The Windows implementation enforces SQLite ReadOnly and SELECT/PRAGMA.
+    const prior = await diagRedis.hGetAll(DIAG_PREFIX + "latest");
+    for (const [id, raw] of Object.entries(prior)) {
+      let item;
+      try { item = JSON.parse(raw); } catch { continue; }
+      if (item.tool !== "project.db.query" ||
+          !["OUTCOME_UNCERTAIN", "OUTCOME_UNCERTAIN_AFTER_RESTART"].includes(item.state)) continue;
+      const corrected = { ...item, at: nowIso(), state: "READ_TIMEOUT_RECLASSIFIED",
+        evidence: "project.db.query is enforced read-only by Windows SQLite connection and SQL validator; it cannot be a mutation.",
+        outcome: "READ_RESULT_UNKNOWN_NO_MUTATION" };
+      await diagRedis.multi().rPush(DIAG_PREFIX + "events", JSON.stringify(corrected))
+        .hSet(DIAG_PREFIX + "latest", id, JSON.stringify(corrected))
+        .hDel(DIAG_PREFIX + "active", id).exec();
+      console.info("READ_ONLY_UNCERTAINTY_CORRECTED", JSON.stringify({ requestId: id, bridgeId: item.bridgeId, tool: item.tool }));
+    }
+    // Rebuild uncertainty lock only from genuinely mutating unresolved requests.
+    const remaining = await diagRedis.hGetAll(DIAG_PREFIX + "latest");
+    uncertainBridges.clear();
+    for (const [id, raw] of Object.entries(remaining)) {
+      try {
+        const item = JSON.parse(raw);
+        if (item.bridgeId && !NONBLOCKING_READ_TOOLS.has(item.tool) &&
+            ["OUTCOME_UNCERTAIN", "OUTCOME_UNCERTAIN_AFTER_RESTART"].includes(item.state))
+          uncertainBridges.set(item.bridgeId, "Unreconciled request: " + id);
+      } catch {}
+    }
     // One-time, request-specific operator cancellation of a stale uncertainty lock.
     // This is NOT evidence that the original filesystem operation succeeded or failed.
     // Never replay the interrupted mutation; preserve the unknown outcome in the audit.
@@ -174,7 +201,7 @@ const NONBLOCKING_READ_TOOLS = new Set([
   "fs.exists", "fs.stat", "fs.drives", "fs.hash", "fs.hash_tree",
   "fs.compare", "fs.tree", "fs.search_text", "fs.read_binary",
   "process.list", "process.discover", "process.status", "process.job_status",
-  "sqlite.query", "pg.roberta.query",
+  "sqlite.query", "project.db.query", "pg.roberta.query",
   "desktop.windows.list", "desktop.windows.inspect", "desktop.controls.inspect",
   "desktop.screen.capture"
 ]);
