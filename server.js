@@ -182,6 +182,9 @@ const EXPENSIVE_READ_TOOLS = new Set(["fs.find", "fs.search_text", "fs.tree", "f
 const READ_COOLDOWN_MS = 30000;
 const readCooldowns = new Map();
 function serializeBridge(bridgeId, action, tool) {
+  // Health uses an independent diagnostic lane; never wait behind slow filesystem commands.
+  // It remains read-only and is not subject to the mutation uncertainty gate.
+  if (tool === "health") return Promise.resolve().then(action);
   const previous = bridgeQueues.get(bridgeId) || Promise.resolve();
   bridgeQueueDepth.set(bridgeId, (bridgeQueueDepth.get(bridgeId) || 0) + 1);
   const current = previous.catch(() => {}).then(() => {
