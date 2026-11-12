@@ -191,14 +191,22 @@ test("MCP Relay tools available and tested end-to-end with isolated fake Bridge"
     assert.ok(operations.length>=10,"Native mocked operations executed");
     assert.ok(operations.every(x=>["fs.hash","process.start","process.status"].includes(x.tool)));
     assert.ok(!operations.some(x=>/ack|redis\.set|delete|write/i.test(x.tool)));
-    let bootChecked=false;
-    for(let i=0;i<120;i++){
-      if(startupOutput.includes("AUTSYS_RELAY_MCP_TYPED_SMOKE_OK")){bootChecked=true;break;}
+    // The Redis boot smoke runs asynchronously after the Relay smoke.
+    // Wait for both independent success markers, not just the first one.
+    const bootDeadline=Date.now()+10000;
+    while(true){
+      const relayOk=startupOutput.includes("AUTSYS_RELAY_MCP_TYPED_SMOKE_OK");
+      const redisOk=startupOutput.includes("AUTSYS_REDIS_MCP_TYPED_SMOKE_OK");
+      if(relayOk && redisOk)break;
+      if(child.exitCode!==null)
+        throw new Error("MCP child exited before boot smoke completed: "+startupOutput.slice(-1600));
+      if(startupOutput.includes("AUTSYS_RELAY_MCP_TYPED_SMOKE_FAILED"))
+        throw new Error("Gateway boot smoke failed: "+startupOutput.slice(-1600));
+      if(Date.now()>=bootDeadline)
+        throw new Error("Gateway boot smoke timed out (relayOk="+relayOk+
+          ", redisOk="+redisOk+"): "+startupOutput.slice(-1600));
       await new Promise(resolve=>setTimeout(resolve,50));
     }
-    assert.equal(bootChecked,true,"Gateway boot MCP typed smoke must succeed: "+startupOutput.slice(-1500));
-    assert.equal(startupOutput.includes("AUTSYS_REDIS_MCP_TYPED_SMOKE_OK"),true,
-      "Gateway boot read-only Redis smoke must succeed: "+startupOutput.slice(-1600));
   }finally{
     await shutdown(child);
     await new Promise(resolve=>backend.close(resolve));
