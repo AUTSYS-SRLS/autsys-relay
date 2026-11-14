@@ -1,7 +1,7 @@
 // P38 Redis-backed atomic queue operations. Dedicated Redis required; no shared production state.
 // The caller must provide an authenticated Redis client and a dedicated namespace.
 const valid=x=>typeof x==='string'&&/^[A-Za-z0-9_-]{1,80}$/.test(x);
-const allowed=new Set(['health','fs.list','fs.read_text','fs.stat','fs.exists']);
+const allowed=new Set(['health','fs.list','fs.read_text','fs.stat','fs.exists','sqlite.submit','sqlite.status','sqlite.cancel','sqlite.health']);
 export function createRedisRelayQueue({client,namespace}={}){
  if(!client||typeof client.eval!=='function'||typeof client.hGet!=='function'||!valid(namespace)||!namespace.startsWith('bridge_v2_'))throw Error('P38_REDIS_CONFIG_DENIED');
  const key=namespace+':queue';
