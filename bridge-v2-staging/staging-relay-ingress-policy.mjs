@@ -6,7 +6,7 @@ export function createRelayIngressPolicy({projectKeys=[]}={}){
  function authorize(req){if(!req||!idOk(req.id)||!allowed.has(req.tool))throw Error('P34_REQUEST_DENIED');
   if(req.tool==='health'){if(req.projectKey!==undefined||req.arguments&&Object.keys(req.arguments).length)throw Error('P34_HEALTH_ARGS_DENIED');return {id:req.id,tool:req.tool,arguments:{}}}
   if(!idOk(req.projectKey)||!projects.has(req.projectKey)||!req.arguments||typeof req.arguments.path!=='string'||!req.arguments.path||Object.keys(req.arguments).length!==1)throw Error('P34_SCOPE_DENIED');
-  if(req.arguments.path.includes('\\0')||req.arguments.path.includes('..'))throw Error('P34_PATH_DENIED');return {id:req.id,tool:req.tool,projectKey:req.projectKey,arguments:{path:req.arguments.path}}
+  const p=req.arguments.path;if(p.length>512||p.includes('\\0')||p.includes('\\\\')||p.includes(':')||p.startsWith('/')||p.split('/').some(x=>!x||x==='.'||x==='..'||x.trim()!==x))throw Error('P34_PATH_DENIED');return {id:req.id,tool:req.tool,projectKey:req.projectKey,arguments:{path:req.arguments.path}}
  }
  return {authorize};
 }
