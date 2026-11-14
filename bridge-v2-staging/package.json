@@ -1,0 +1,11 @@
+{
+  "name": "autsys-gateway-v2-isolated",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {
+    "redis": "^5.0.0"
+  }
+}
