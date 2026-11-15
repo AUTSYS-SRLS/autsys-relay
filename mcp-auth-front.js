@@ -30,6 +30,7 @@ function proxyHttp(req, res, targetPort) {
   const headers = { ...req.headers, host: `127.0.0.1:${targetPort}` };
   delete headers.authorization;
   const upstream = http.request({ host: "127.0.0.1", port: targetPort, method: req.method, path: req.url, headers }, response => {
+    if ((response.statusCode || 0) >= 400) console.warn("MCP_UPSTREAM_HTTP_ERROR", JSON.stringify({path:req.url,method:req.method,status:response.statusCode,upstreamPort:targetPort}));
     res.writeHead(response.statusCode || 502, response.headers);
     response.pipe(res);
   });
@@ -45,7 +46,7 @@ const server = http.createServer((req, res) => {
   try { url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`); }
   catch { return json(res, 400, { ok: false, error: "bad request" }); }
   if (url.pathname === "/mcp") {
-    if (!safeEqual(bearer(req), MCP_ACCESS_TOKEN)) return json(res, 401, { ok: false, error: "UNAUTHORIZED" });
+    if (!safeEqual(bearer(req), MCP_ACCESS_TOKEN)) { console.warn("MCP_AUTH_REJECT", JSON.stringify({method:req.method,path:url.pathname,status:401,hasAuthorization:Boolean(req.headers.authorization)})); return json(res, 401, { ok: false, error: "UNAUTHORIZED" }); }
     return proxyHttp(req, res, MCP_FULL_PORT);
   }
   return proxyHttp(req, res, WORK_BOOTSTRAP_PORT);
