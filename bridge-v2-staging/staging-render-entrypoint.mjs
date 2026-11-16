@@ -10,7 +10,7 @@ const projectKeys=process.env.RELAY_PROJECT_KEYS.split(',').map(x=>x.trim()).fil
 const mcpKeys=['MCP_V2_RESOURCE_URL','MCP_V2_OAUTH_ISSUER','MCP_V2_OAUTH_JWKS_URI','MCP_V2_OAUTH_AUDIENCE','MCP_V2_PROJECT_KEYS'];
 const mcpRequested=mcpKeys.some(k=>Boolean(process.env[k]));
 if(mcpRequested&&mcpKeys.some(k=>!process.env[k]))throw Error('MCP_V2_REQUIRED_OAUTH_CONFIG_MISSING');
-const mcpHandlerFactory=mcpRequested?(queue)=>{
+const mcpHandlerFactory=mcpRequested?(queue,ingressPolicy)=>{
  const verifyAccessToken=createV2OAuthJwtVerifier({
   issuer:process.env.MCP_V2_OAUTH_ISSUER,
   jwksUri:process.env.MCP_V2_OAUTH_JWKS_URI,
@@ -19,7 +19,7 @@ const mcpHandlerFactory=mcpRequested?(queue)=>{
  const mcpKeysAllowed=process.env.MCP_V2_PROJECT_KEYS.split(',').map(x=>x.trim()).filter(Boolean);
  if(mcpKeysAllowed.some(k=>!projectKeys.includes(k)))throw Error('MCP_V2_PROJECT_SCOPE_DENIED');
  const origins=(process.env.MCP_V2_ALLOWED_ORIGINS||'').split(',').map(x=>x.trim()).filter(Boolean);
- return createV2McpHandler({queue,verifyAccessToken,resourceUrl:process.env.MCP_V2_RESOURCE_URL,
+ return createV2McpHandler({queue,authorizeRequest:request=>ingressPolicy.authorize(request),verifyAccessToken,resourceUrl:process.env.MCP_V2_RESOURCE_URL,
   authorizationServer:process.env.MCP_V2_OAUTH_ISSUER,projectKeys:mcpKeysAllowed,allowedOrigins:origins});
 }:null;
 const runtime=await createConnectedSecureRemoteRelay({redisUrl:process.env.REDIS_URL,namespace:'bridge_v2_staging_p38',token:process.env.RELAY_TOKEN,signingSecret:process.env.RELAY_SIGNING_SECRET,ingressSecret:process.env.RELAY_INGRESS_SECRET,projectKeys,mcpHandlerFactory});
