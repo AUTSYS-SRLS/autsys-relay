@@ -4,12 +4,13 @@ import {timingSafeEqual,randomBytes} from 'node:crypto';
 import {createAuthenticatedIngress} from './staging-relay-authenticated-ingress.mjs';
 import {createSignedRelayEnvelope} from './staging-relay-envelope-auth.mjs';
 const validId=x=>typeof x==='string'&&/^[A-Za-z0-9_-]{1,80}$/.test(x);
-export function createStagingRelayServer({token,signingSecret,maxBodyBytes=65536,durableQueue=null,exclusiveOwner=null,ingressPolicy=null,externalIngress=null}={}){
+export function createStagingRelayServer({token,signingSecret,maxBodyBytes=65536,durableQueue=null,exclusiveOwner=null,ingressPolicy=null,externalIngress=null,mcpHandler=null}={}){
  if(typeof token!=='string'||token.length<32||typeof signingSecret!=='string'||signingSecret.length<32)throw Error('P30_CREDENTIALS_REQUIRED');
  const queue=[];const records=new Map();let bound=false;
  const ingressHandler=externalIngress?createAuthenticatedIngress({...externalIngress,enqueue:(body)=>enqueue(body)}):null;
  const server=createServer(async(req,res)=>{
   res.setHeader('content-type','application/json');res.setHeader('cache-control','no-store');
+  if(mcpHandler){try{if(await mcpHandler(req,res))return}catch{if(!res.headersSent){res.writeHead(503);res.end(JSON.stringify({error:'MCP_V2_GATEWAY_UNAVAILABLE'}))}else if(!res.writableEnded){res.end()}return}}
   if(req.url==='/enqueue'){if(!ingressHandler){res.writeHead(404);return res.end('{}')}return ingressHandler(req,res)}
   const supplied=req.headers.authorization||'';const expected='Bearer '+token;
   if(Buffer.byteLength(supplied)!==Buffer.byteLength(expected)||!timingSafeEqual(Buffer.from(supplied),Buffer.from(expected))){res.writeHead(401);return res.end('{}')}
