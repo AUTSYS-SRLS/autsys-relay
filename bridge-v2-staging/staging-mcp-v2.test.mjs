@@ -57,8 +57,8 @@ test('MCP V2 authorization, list, direct health, project access and status',asyn
   for(const path of ['/absolute/file','C:/Windows/file','folder//file','folder/./file','folder/../file']){
    res=await post(body(11,'tools/call',{name:'fs.exists',arguments:{projectKey:'demo',path}}));
    const denied=await res.json();
-   assert.equal(denied.result.isError,true,'unsafe path accepted: '+path);
-   assert.match(denied.result.content[0].text,/BRIDGE_V2_UNAVAILABLE/);
+   assert.ok(denied.error?.code===-32602||denied.result?.isError===true,'unsafe path accepted: '+path);
+   assert.equal([...queue.records.values()].some(x=>x.arguments?.path===path),false,'unsafe path queued: '+path);
   }
 
  }finally{await ctx.close()}
