@@ -2,11 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createStagingRelayServer} from './staging-render-relay-protocol.mjs';
 import {createV2McpHandler} from './staging-mcp-v2-handler.mjs';
+import {createRelayIngressPolicy} from './staging-relay-ingress-policy.mjs';
 
 test('MCP endpoint on existing V2 relay preserves private relay security',async()=>{
  const queue={async enqueue(){throw Error('UNEXPECTED_ENQUEUE')},async inspect(){return null}};
  const handler=createV2McpHandler({
-  queue,verifyAccessToken:async token=>token==='authorized'?{sub:'integration-user',scopes:['autsys.v2.read'],projectKeys:['demo']}:null,
+  queue,authorizeRequest:createRelayIngressPolicy({projectKeys:['demo']}).authorize,verifyAccessToken:async token=>token==='authorized'?{sub:'integration-user',scopes:['autsys.v2.read'],projectKeys:['demo']}:null,
   resourceUrl:'https://bridge.example.test/mcp',authorizationServer:'https://idp.example.test',
   projectKeys:['demo'],allowedOrigins:[]});
  const relay=createStagingRelayServer({token:'r'.repeat(48),signingSecret:'s'.repeat(48),mcpHandler:handler});
