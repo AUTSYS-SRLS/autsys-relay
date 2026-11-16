@@ -36,8 +36,8 @@ async function bodyJson(req,maxBody){
   for await(const chunk of req){count+=chunk.length;if(count>maxBody)throw Error('BODY_LIMIT');buf.push(chunk)}
   return JSON.parse(Buffer.concat(buf).toString('utf8'));
 }
-export function createV2McpHandler({queue,verifyAccessToken,resourceUrl,authorizationServer,projectKeys=[],allowedOrigins=[],waitMs=DEFAULT_WAIT_MS,now=()=>Date.now()}={}){
- if(!queue||typeof queue.enqueue!=='function'||typeof queue.inspect!=='function'||typeof verifyAccessToken!=='function')throw Error('MCP_V2_DEPENDENCIES_REQUIRED');
+export function createV2McpHandler({queue,authorizeRequest,verifyAccessToken,resourceUrl,authorizationServer,projectKeys=[],allowedOrigins=[],waitMs=DEFAULT_WAIT_MS,now=()=>Date.now()}={}){
+ if(!queue||typeof queue.enqueue!=='function'||typeof queue.inspect!=='function'||typeof verifyAccessToken!=='function'||typeof authorizeRequest!=='function')throw Error('MCP_V2_DEPENDENCIES_REQUIRED');
  if(!resourceUrl?.startsWith('https://')||!authorizationServer?.startsWith('https://'))throw Error('MCP_V2_OAUTH_REQUIRED');
  if(!Array.isArray(projectKeys)||!projectKeys.every(validId)||waitMs<100||waitMs>20000)throw Error('MCP_V2_CONFIG_DENIED');
  const resource=new URL(resourceUrl);
@@ -107,7 +107,8 @@ export function createV2McpHandler({queue,verifyAccessToken,resourceUrl,authoriz
   activeCalls++;
   const requestId='mcp'+randomUUID().replaceAll('-','');
   try{
-   await queue.enqueue({...request,id:requestId});
+   const authorized=authorizeRequest({...request,id:requestId});
+   await queue.enqueue(authorized);
    const deadline=now()+waitMs;
    do{
     const item=await queue.inspect(requestId);
