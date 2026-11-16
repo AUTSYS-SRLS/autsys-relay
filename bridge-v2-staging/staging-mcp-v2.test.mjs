@@ -4,6 +4,7 @@ import {createServer} from 'node:http';
 import {generateKeyPairSync,createSign} from 'node:crypto';
 import {createV2McpHandler} from './staging-mcp-v2-handler.mjs';
 import {createV2OAuthJwtVerifier} from './staging-mcp-v2-oauth.mjs';
+import {createRelayIngressPolicy} from './staging-relay-ingress-policy.mjs';
 
 const resourceUrl='https://bridge-v2.example.test/mcp';
 const body=(id,method,params)=>({jsonrpc:'2.0',id,method,...(params?{params}:{})});
@@ -19,7 +20,7 @@ async function mockServer(handler){
 const headers={authorization:'Bearer goodtoken',accept:'application/json, text/event-stream','content-type':'application/json'};
 test('MCP V2 authorization, list, direct health, project access and status',async()=>{
  const queue=fakeQueue();
- const handle=createV2McpHandler({queue,resourceUrl,authorizationServer:'https://auth.example.test',
+ const handle=createV2McpHandler({queue,authorizeRequest:createRelayIngressPolicy({projectKeys:['demo']}).authorize,resourceUrl,authorizationServer:'https://auth.example.test',
   projectKeys:['demo'],allowedOrigins:[],verifyAccessToken:async token=>token==='goodtoken'?{sub:'test-user',scopes:['autsys.v2.read'],projectKeys:['demo']}:null});
  const ctx=await mockServer(handle);
  try{
