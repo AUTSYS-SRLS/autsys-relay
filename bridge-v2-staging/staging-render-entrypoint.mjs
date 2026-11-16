@@ -9,6 +9,7 @@ const projectKeys=process.env.RELAY_PROJECT_KEYS.split(',').map(x=>x.trim()).fil
 // MCP is opt-in. Incomplete OAuth configuration prevents startup instead of exposing private tools.
 const mcpKeys=['MCP_V2_RESOURCE_URL','MCP_V2_OAUTH_ISSUER','MCP_V2_OAUTH_JWKS_URI','MCP_V2_OAUTH_AUDIENCE','MCP_V2_PROJECT_KEYS'];
 const mcpRequested=mcpKeys.some(k=>Boolean(process.env[k]));
+console.log(mcpRequested?'MCP_V2_OAUTH_CONFIG_REQUESTED':'MCP_V2_DISABLED_NO_OAUTH');
 if(mcpRequested&&mcpKeys.some(k=>!process.env[k]))throw Error('MCP_V2_REQUIRED_OAUTH_CONFIG_MISSING');
 const mcpHandlerFactory=mcpRequested?(queue,ingressPolicy)=>{
  const verifyAccessToken=createV2OAuthJwtVerifier({
