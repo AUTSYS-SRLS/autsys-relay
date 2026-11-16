@@ -19,7 +19,7 @@ const schemas = {
 };
 const info=(name)=>({name,description:'AUTSYS PC Bridge V2 isolated read-only '+name,
   inputSchema:name==='health'?schemas.health:name==='request_status'?schemas.request_status:schemas.fs,
-  annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false}});
+  annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false},securitySchemes:[{type:'oauth2',scopes:['autsys.v2.read']}]});
 const validId=(v)=>typeof v==='string'&&/^[A-Za-z0-9_-]{1,80}$/.test(v);
 const allowedTool=(name,args,projects)=>{
   if(name==='health') return Object.keys(args).length===0?{tool:'health',arguments:{}}:null;
@@ -42,6 +42,7 @@ export function createV2McpHandler({queue,verifyAccessToken,resourceUrl,authoriz
  if(!Array.isArray(projectKeys)||!projectKeys.every(validId)||waitMs<100||waitMs>20000)throw Error('MCP_V2_CONFIG_DENIED');
  const resource=new URL(resourceUrl);
  const metadataPath='/.well-known/oauth-protected-resource'+resource.pathname;
+ const rootMetadataPath='/.well-known/oauth-protected-resource';
  const protectedMetadata={resource:resourceUrl,authorization_servers:[authorizationServer],scopes_supported:['autsys.v2.read']};
  const tools=['health','fs.exists','fs.stat','fs.list','fs.read_text','request_status'].map(info);
  let activeCalls=0;
@@ -49,10 +50,10 @@ export function createV2McpHandler({queue,verifyAccessToken,resourceUrl,authoriz
  const maxConcurrentCalls=4, maxPerMinute=60;
  return async function handle(req,res){
   const path=(req.url||'').split('?')[0];
-  if(path!==resource.pathname&&path!==metadataPath)return false;
+  if(path!==resource.pathname&&path!==metadataPath&&path!==rootMetadataPath)return false;
   const origin=req.headers.origin;
   if(origin&&(!allowedOrigins.includes(origin))) {json(res,403,{error:'ORIGIN_DENIED'});return true}
-  if(path===metadataPath){if(req.method!=='GET'){json(res,405,{error:'METHOD_NOT_ALLOWED'});return true}json(res,200,protectedMetadata);return true}
+  if(path===metadataPath||path===rootMetadataPath){if(req.method!=='GET'){json(res,405,{error:'METHOD_NOT_ALLOWED'});return true}json(res,200,protectedMetadata);return true}
   if(req.method!=='POST'){json(res,405,{error:'MCP_POST_REQUIRED'});return true}
   const auth=String(req.headers.authorization||'');
   const token=auth.startsWith('Bearer ')?auth.slice(7):'';
