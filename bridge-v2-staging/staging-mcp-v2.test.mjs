@@ -54,6 +54,13 @@ test('MCP V2 authorization, list, direct health, project access and status',asyn
   assert.equal(JSON.parse((await res.json()).result.content[0].text).status,'completed');
   res=await post(body(10,'tools/call',{name:'fs.exists',arguments:{projectKey:'demo',path:'../private'}}));
   assert.equal((await res.json()).error.code,-32602);
+  for(const path of ['/absolute/file','C:/Windows/file','folder//file','folder/./file','folder/../file']){
+   res=await post(body(11,'tools/call',{name:'fs.exists',arguments:{projectKey:'demo',path}}));
+   const denied=await res.json();
+   assert.equal(denied.result.isError,true,'unsafe path accepted: '+path);
+   assert.match(denied.result.content[0].text,/BRIDGE_V2_UNAVAILABLE/);
+  }
+
  }finally{await ctx.close()}
 });
 test('OAuth RS256 verifier denies unsigned/wrong audience and verifies scopes',async()=>{
