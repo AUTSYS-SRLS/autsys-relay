@@ -44,6 +44,9 @@ export function createV2McpHandler({queue,verifyAccessToken,resourceUrl,authoriz
  const metadataPath='/.well-known/oauth-protected-resource'+resource.pathname;
  const protectedMetadata={resource:resourceUrl,authorization_servers:[authorizationServer],scopes_supported:['autsys.v2.read']};
  const tools=['health','fs.exists','fs.stat','fs.list','fs.read_text','request_status'].map(info);
+ let activeCalls=0;
+ const recentRequests=new Map();
+ const maxConcurrentCalls=4, maxPerMinute=60;
  return async function handle(req,res){
   const path=(req.url||'').split('?')[0];
   if(path!==resource.pathname&&path!==metadataPath)return false;
@@ -55,11 +58,17 @@ export function createV2McpHandler({queue,verifyAccessToken,resourceUrl,authoriz
   const token=auth.startsWith('Bearer ')?auth.slice(7):'';
   let identity;
   try{identity=token?await verifyAccessToken(token):null}catch{identity=null}
-  if(!identity||!Array.isArray(identity.scopes)||!identity.scopes.includes('autsys.v2.read')){
+  if(!identity||typeof identity.sub!=='string'||!identity.sub||!Array.isArray(identity.scopes)||!identity.scopes.includes('autsys.v2.read')){
    json(res,401,{error:'OAUTH_TOKEN_REQUIRED'},{'WWW-Authenticate':'Bearer resource_metadata="'+new URL(metadataPath,resource).href+'"'});
    return true;
   }
   if(!String(req.headers.accept||'').includes('application/json')){json(res,406,{error:'MCP_ACCEPT_REQUIRED'});return true}
+  const cutoff=now()-60000;
+  for(const [client,times] of recentRequests){const current=times.filter(t=>t>cutoff);if(current.length)recentRequests.set(client,current);else recentRequests.delete(client)}
+  const previous=recentRequests.get(identity.sub)||[];
+  if(previous.length>=maxPerMinute){json(res,429,{error:'MCP_RATE_LIMIT_EXCEEDED'},{'Retry-After':'60'});return true}
+  if(!recentRequests.has(identity.sub)&&recentRequests.size>=256){json(res,503,{error:'MCP_CLIENT_LIMIT'});return true}
+  previous.push(now());recentRequests.set(identity.sub,previous);
   let msg;
   try{msg=await bodyJson(req,MAX_BODY_BYTES)}catch{json(res,400,rpcError(null,-32700,'Invalid JSON'));return true}
   if(!msg||Array.isArray(msg)||msg.jsonrpc!=='2.0'||typeof msg.method!=='string'||(Object.hasOwn(msg,'id')&&!['string','number'].includes(typeof msg.id))){
@@ -93,6 +102,8 @@ export function createV2McpHandler({queue,verifyAccessToken,resourceUrl,authoriz
   }
   const request=allowedTool(p.name,args,readable);
   if(!request){json(res,200,rpcError(id,-32602,'Read-only tool or project denied'));return true}
+  if(activeCalls>=maxConcurrentCalls){json(res,503,{error:'MCP_EXECUTION_CAPACITY'},{'Retry-After':'2'});return true}
+  activeCalls++;
   const requestId='mcp'+randomUUID().replaceAll('-','');
   try{
    await queue.enqueue({...request,id:requestId});
@@ -109,7 +120,7 @@ export function createV2McpHandler({queue,verifyAccessToken,resourceUrl,authoriz
    json(res,200,rpc(id,{content:[{type:'text',text:JSON.stringify({requestId,status:'pending',advice:'Use request_status; do not repeat a mutation'})}],isError:true}));
   }catch{
    json(res,200,rpc(id,{content:[{type:'text',text:JSON.stringify({requestId,error:'BRIDGE_V2_UNAVAILABLE'})}],isError:true}));
-  }
+  }finally{activeCalls--}
   return true;
  };
 }
