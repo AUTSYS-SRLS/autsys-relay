@@ -20,7 +20,7 @@ const headers={authorization:'Bearer goodtoken',accept:'application/json, text/e
 test('MCP V2 authorization, list, direct health, project access and status',async()=>{
  const queue=fakeQueue();
  const handle=createV2McpHandler({queue,resourceUrl,authorizationServer:'https://auth.example.test',
-  projectKeys:['demo'],allowedOrigins:[],verifyAccessToken:async token=>token==='goodtoken'?{scopes:['autsys.v2.read'],projectKeys:['demo']}:null});
+  projectKeys:['demo'],allowedOrigins:[],verifyAccessToken:async token=>token==='goodtoken'?{sub:'test-user',scopes:['autsys.v2.read'],projectKeys:['demo']}:null});
  const ctx=await mockServer(handle);
  try{
   const post=(payload,h=headers)=>fetch(ctx.url+'/mcp',{method:'POST',headers:h,body:JSON.stringify(payload)});
