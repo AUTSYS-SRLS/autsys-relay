@@ -15,7 +15,7 @@ const rpcError=(id,code,message)=>({jsonrpc:'2.0',id,error:{code,message}});
 const schemas = {
   health:{type:'object',properties:{},additionalProperties:false},
   fs:{type:'object',properties:{projectKey:{type:'string'},path:{type:'string'}},required:['projectKey','path'],additionalProperties:false},
-  request_status:{type:'object',properties:{requestId:{type:'string'},projectKey:{type:'string'}},required:['requestId','projectKey'],additionalProperties:false}
+  request_status:{type:'object',properties:{requestId:{type:'string'},projectKey:{type:'string'}},required:['requestId'],additionalProperties:false}
 };
 const info=(name)=>({name,description:'AUTSYS PC Bridge V2 isolated read-only '+name,
   inputSchema:name==='health'?schemas.health:name==='request_status'?schemas.request_status:schemas.fs,
@@ -68,7 +68,7 @@ export function createV2McpHandler({queue,verifyAccessToken,resourceUrl,authoriz
   if(!Object.hasOwn(msg,'id')){res.writeHead(202,{'cache-control':'no-store'});res.end();return true}
   const id=msg.id;
   if(msg.method==='initialize'){
-   json(res,200,rpc(id,{protocolVersion:'2026-07-28',capabilities:{tools:{}},serverInfo:{name:'AUTSYS-PC-BRIDGE-V2',version:'0.1.0'}}));return true;
+   json(res,200,rpc(id,{protocolVersion:'2025-03-26',capabilities:{tools:{}},serverInfo:{name:'AUTSYS-PC-BRIDGE-V2',version:'0.1.0'}}));return true;
   }
   if(msg.method==='ping'){json(res,200,rpc(id,{}));return true}
   if(msg.method==='tools/list'){json(res,200,rpc(id,{tools}));return true}
@@ -78,14 +78,15 @@ export function createV2McpHandler({queue,verifyAccessToken,resourceUrl,authoriz
    json(res,200,rpcError(id,-32602,'Invalid params'));return true;
   }
   const args=p.arguments;
-  const readable=identity.projectKeys===undefined?projectKeys:projectKeys.filter(k=>identity.projectKeys.includes(k));
+  const readable=Array.isArray(identity.projectKeys)?projectKeys.filter(k=>identity.projectKeys.includes(k)):[];
   if(p.name==='request_status'){
-   if(!validId(args.requestId)||!validId(args.projectKey)||!readable.includes(args.projectKey)||Object.keys(args).some(k=>!['requestId','projectKey'].includes(k))){
+   if(!validId(args.requestId)||(args.projectKey!==undefined&&(!validId(args.projectKey)||!readable.includes(args.projectKey)))||Object.keys(args).some(k=>!['requestId','projectKey'].includes(k))){
     json(res,200,rpcError(id,-32602,'Invalid request status'));return true;
    }
    try{
     const item=await queue.inspect(args.requestId);
-    const safe=item&&item.projectKey===args.projectKey?{status:item.status,result:item.status==='completed'?item.result:undefined}:null;
+    const permitted=item&&(item.tool==='health'&&args.projectKey===undefined||item.projectKey!==undefined&&item.projectKey===args.projectKey&&readable.includes(args.projectKey));
+    const safe=permitted?{status:item.status,result:item.status==='completed'?item.result:undefined}:null;
     json(res,200,rpc(id,{content:[{type:'text',text:JSON.stringify(safe??{status:'not_found'})}],isError:false}));
    }catch{json(res,200,rpc(id,{content:[{type:'text',text:JSON.stringify({error:'STATUS_UNAVAILABLE'})}],isError:true}))}
    return true;
