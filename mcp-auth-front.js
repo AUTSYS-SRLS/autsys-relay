@@ -46,6 +46,13 @@ const server = http.createServer((req, res) => {
   try { url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`); }
   catch { return json(res, 400, { ok: false, error: "bad request" }); }
   if (url.pathname === "/mcp") {
+    // Boundary diagnostics: no tokens, bodies, client IPs or private data.
+    const traceId = crypto.randomUUID();
+    const started = process.hrtime.bigint();
+    res.setHeader("x-autsys-mcp-trace", traceId);
+    console.info("MCP_EDGE_ARRIVAL", JSON.stringify({traceId,method:req.method,path:url.pathname,contentLength:Number(req.headers["content-length"]||0),hasAuthorization:Boolean(req.headers.authorization)}));
+    res.once("finish", () => console.info("MCP_EDGE_FINISH", JSON.stringify({traceId,status:res.statusCode,elapsedMs:Number(process.hrtime.bigint()-started)/1e6})));
+    res.once("close", () => { if(!res.writableFinished) console.warn("MCP_EDGE_ABORT", JSON.stringify({traceId,elapsedMs:Number(process.hrtime.bigint()-started)/1e6})); });
     if (!safeEqual(bearer(req), MCP_ACCESS_TOKEN)) { console.warn("MCP_AUTH_REJECT", JSON.stringify({method:req.method,path:url.pathname,status:401,hasAuthorization:Boolean(req.headers.authorization)})); return json(res, 401, { ok: false, error: "UNAUTHORIZED" }); }
     return proxyHttp(req, res, MCP_FULL_PORT);
   }
