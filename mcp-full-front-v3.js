@@ -383,6 +383,100 @@ async function ensureDirectory(path, bridgeId = "") {
   }
 }
 
+
+// Document governance is global and issuer-specific, never inferred from the project.
+// This is intentionally independent of the selective pinned agentRules bootstrap.
+function buildDocumentBootstrap(rows, queryWarning = null) {
+  const latest = new Map();
+  for (const rule of Array.isArray(rows) ? rows : []) {
+    const key = String(rule?.rule_key || "").trim();
+    if (!key) continue;
+    const previous = latest.get(key);
+    if (!previous || Number(rule.rule_version || 0) > Number(previous.rule_version || 0)) latest.set(key, rule);
+  }
+  const documentRules = [...latest.values()].sort((a, b) =>
+    String(a.rule_key).localeCompare(String(b.rule_key)));
+  const keys = new Set(latest.keys());
+  const requiredKeys = [
+    "DOCUMENT_SYSTEM_MASTER_RULES",
+    "DOCUMENT_AI_NUMBERING_SCHEME",
+    "DOCUMENT_OFFICIAL_ISSUANCE_ACTIVE",
+    "DOCUMENT_REVIEW_BEFORE_SAVE",
+    "DOCUMENT_ISSUANCE_GOVERNANCE",
+    "DOCUMENT_ASSET_ENFORCEMENT",
+    "DOCUMENT_LAYOUT_GOLDEN_TEMPLATES",
+    "DOCUMENT_REVISION_GOVERNANCE",
+    "DOCUMENT_DATA_SOURCE_VERIFICATION",
+    "DOCUMENT_AI_ISSUED_STORAGE_POLICY",
+    "DOCUMENT_SUBSEQUENT_PAGES_LAYOUT",
+    "PROJECT_OFFICIAL_DOCUMENT_BASELINE",
+    "AUTSYS_SRLS_AI_DOCUMENT_STANDARD_MODEL",
+    "AUTSYS_PIVA_AI_DOCUMENT_STANDARD_MODEL",
+    "AUTSYS_DOCUMENT_GRAPHICS_LOGO_BASELINE",
+    "ING_GUIDO_AI_DOCUMENT_STANDARD_MODEL",
+    "EOLO_AI_DOCUMENT_STANDARD_MODEL",
+    "EOLO_DOCUMENT_GRAPHICS_LOGO_BASELINE"
+  ];
+  const documentRuleGroups = {
+    common: documentRules.filter(r =>
+      r.rule_key.startsWith("DOCUMENT_") || r.rule_key === "PROJECT_OFFICIAL_DOCUMENT_BASELINE").map(r => r.rule_key),
+    autsysSrls: documentRules.filter(r =>
+      r.rule_key === "AUTSYS_SRLS_AI_DOCUMENT_STANDARD_MODEL" ||
+      r.rule_key === "AUTSYS_DOCUMENT_GRAPHICS_LOGO_BASELINE").map(r => r.rule_key),
+    autsysPivaIngGuido: documentRules.filter(r =>
+      r.rule_key === "AUTSYS_PIVA_AI_DOCUMENT_STANDARD_MODEL" ||
+      r.rule_key === "ING_GUIDO_AI_DOCUMENT_STANDARD_MODEL" ||
+      r.rule_key === "AUTSYS_DOCUMENT_GRAPHICS_LOGO_BASELINE").map(r => r.rule_key),
+    eolo: documentRules.filter(r => r.rule_key.startsWith("EOLO_")).map(r => r.rule_key)
+  };
+  const classified = new Set(Object.values(documentRuleGroups).flat());
+  const unclassifiedRuleKeys = documentRules.filter(r => !classified.has(r.rule_key)).map(r => r.rule_key);
+  const storageRule = latest.get("DOCUMENT_AI_ISSUED_STORAGE_POLICY");
+  let meta = storageRule?.metadata_json || {};
+  if (typeof meta === "string") {
+    try { meta = JSON.parse(meta); } catch { meta = {}; }
+  }
+  const roots = meta?.storage_roots || {};
+  const storageEntries = [
+    { issuerKey: "eolo", entity: "TERMOMECCANICA EOLO", path: roots.eolo,
+      purpose: "Archivio fisico dei documenti AI emessi da EOLO" },
+    { issuerKey: "autsys_piva", entity: "AUTSYS DI AUTELLI ING. GUIDO / ING. GUIDO AUTELLI",
+      path: roots.autsys_piva, purpose: "Archivio fisico dei documenti AI emessi da AUTSYS P.IVA / Ing. Guido Autelli" },
+    { issuerKey: "autsys_srls", entity: "AUTSYS S.R.L.S.", path: roots.autsys_srls,
+      purpose: "Archivio fisico dei documenti AI emessi da AUTSYS S.R.L.S." }
+  ];
+  const documentStorageRoots = storageEntries.filter(x => typeof x.path === "string" && x.path.trim());
+  const missingMandatoryRuleKeys = requiredKeys.filter(k => !keys.has(k));
+  const missingStorageRootKeys = storageEntries.filter(x => typeof x.path !== "string" || !x.path.trim()).map(x => x.issuerKey);
+  const complete = !queryWarning && missingMandatoryRuleKeys.length === 0 &&
+    missingStorageRootKeys.length === 0 && unclassifiedRuleKeys.length === 0;
+  return {
+    documentRuleCount: documentRules.length,
+    documentRules,
+    documentRuleGroups,
+    documentIssuerSelection: {
+      required: true,
+      issuer: null,
+      inferFromProject: false,
+      allowedIssuers: [
+        "AUTSYS S.R.L.S.",
+        "AUTSYS DI AUTELLI ING. GUIDO / ING. GUIDO AUTELLI",
+        "TERMOMECCANICA EOLO"
+      ]
+    },
+    documentStorageRootCount: documentStorageRoots.length,
+    documentStorageRoots,
+    documentRuleCompliance: {
+      complete,
+      status: complete ? "COMPLETE" : "INCOMPLETE",
+      missingMandatoryRuleKeys,
+      missingStorageRootKeys,
+      unclassifiedRuleKeys,
+      queryWarning: queryWarning || null
+    }
+  };
+}
+
 async function bootstrap(scope, projectName = "", bridgeId = "") {
   scope = String(scope || "").toUpperCase();
   if (!new Set(["GENERAL", "PROJECT"]).has(scope)) {
@@ -464,6 +558,18 @@ async function bootstrap(scope, projectName = "", bridgeId = "") {
 
   const agentRulesSql = `SELECT r.public_id,r.rule_key,r.rule_version,r.rule_text_human,r.priority_level,r.metadata_json FROM public.autsys_agent_rules r JOIN public.autsys_agent_registry a ON a.public_id=r.agent_public_id WHERE a.bootstrap_enabled=true AND a.lifecycle_status='active' AND r.is_active=true AND r.lifecycle_status='active' AND r.user_confirmed=true AND (COALESCE((r.metadata_json->>'bootstrap_pinned')::boolean,false)=true OR COALESCE((r.metadata_json->>'bootstrap_required')::boolean,false)=true) ORDER BY r.priority_level DESC,r.rule_key,r.rule_version DESC,r.id;`;
 
+  const documentRulesSql = `SELECT DISTINCT ON (r.rule_key)
+    r.public_id,r.rule_key,r.rule_version,r.rule_text_human,r.rule_scope,r.priority_level,r.metadata_json
+    FROM public.autsys_agent_rules r
+    JOIN public.autsys_agent_registry a ON a.public_id=r.agent_public_id
+    WHERE a.bootstrap_enabled=true AND a.lifecycle_status='active'
+      AND r.is_active=true AND r.lifecycle_status='active' AND r.user_confirmed=true
+      AND lower(COALESCE(r.rule_scope,'')) IN ('general','global_autsys_all_products')
+      AND (r.rule_key LIKE 'DOCUMENT_%' OR r.rule_key LIKE '%_DOCUMENT_%'
+           OR r.rule_key='PROJECT_OFFICIAL_DOCUMENT_BASELINE'
+           OR COALESCE(r.metadata_json->>'domain','') LIKE 'document%')
+    ORDER BY r.rule_key,r.rule_version DESC,r.id DESC;`;
+
   const agentSql = `SELECT count(*)::int AS agent_capability_count,
     COALESCE(jsonb_agg(jsonb_build_object('capability_key',a.capability_key,'capability_type',a.capability_type,'access_mode',a.access_mode,'risk_level',a.risk_level,'verification_status',a.verification_status) ORDER BY a.capability_key),'[]'::jsonb) AS agent_capabilities
     FROM public.autsys_agent_capabilities a WHERE a.is_enabled=true;`;
@@ -509,10 +615,11 @@ async function bootstrap(scope, projectName = "", bridgeId = "") {
       oi.updated_at DESC NULLS LAST,oi.id;`;
 
   const core = await queryRows(coreSql, bridgeId, "bootstrap core");
-  const [identityOptional, foundationOptional, rulesOptional, agentOptional, contextOptional, globalContextOptional, activeLearningOptional, databaseCatalogOptional, databaseSourcesOptional, openItemsOptional] = await Promise.all([
+  const [identityOptional, foundationOptional, rulesOptional, documentRulesOptional, agentOptional, contextOptional, globalContextOptional, activeLearningOptional, databaseCatalogOptional, databaseSourcesOptional, openItemsOptional] = await Promise.all([
     optionalQueryRows(agentIdentitySql, bridgeId, "bootstrap agent identity"),
     optionalQueryRows(agentFoundationSql, bridgeId, "bootstrap agent foundation"),
     optionalQueryRows(agentRulesSql, bridgeId, "bootstrap agent rules"),
+    optionalQueryRows(documentRulesSql, bridgeId, "bootstrap document rules"),
     optionalQueryRows(agentSql, bridgeId, "bootstrap agent capabilities"),
     optionalQueryRows(contextSql, bridgeId, "bootstrap project context"),
     optionalQueryRows(globalContextSql, bridgeId, "bootstrap global context"),
@@ -524,6 +631,7 @@ async function bootstrap(scope, projectName = "", bridgeId = "") {
   const identity = identityOptional.data;
   const foundation = foundationOptional.data;
   const rules = rulesOptional.data;
+  const documentRulesResult = documentRulesOptional.data;
   const agent = agentOptional.data;
   const context = contextOptional.data;
   const globalContextResult = globalContextOptional.data;
@@ -535,6 +643,7 @@ async function bootstrap(scope, projectName = "", bridgeId = "") {
     identityOptional.warning,
     foundationOptional.warning,
     rulesOptional.warning,
+    documentRulesOptional.warning,
     agentOptional.warning,
     contextOptional.warning,
     globalContextOptional.warning,
@@ -555,18 +664,13 @@ async function bootstrap(scope, projectName = "", bridgeId = "") {
   const databaseCatalogRows = Array.isArray(databaseCatalogResult.rows) ? databaseCatalogResult.rows : [];
   const databaseSourceRows = Array.isArray(databaseSourcesResult.rows) ? databaseSourcesResult.rows : [];
   const openItemRows = Array.isArray(openItemsResult.rows) ? openItemsResult.rows : [];
-  const documentRuleRows = ruleRows.filter(r => {
-    const domain = String(r?.metadata_json?.domain || "").toLowerCase();
-    const key = String(r?.rule_key || "").toUpperCase();
-    return domain.startsWith("document") || key.includes("DOCUMENT") || key.includes("_AI_DOCUMENT_");
-  });
-  const storageRule = ruleRows.find(r => r?.rule_key === "DOCUMENT_AI_ISSUED_STORAGE_POLICY");
-  const storageRoots = storageRule?.metadata_json?.storage_roots || {};
-  const documentStorageRoots = [
-    { entity: "TERMOMECCANICA EOLO", path: storageRoots.eolo || null, purpose: "Archivio fisico dei documenti AI emessi da EOLO" },
-    { entity: "AUTSYS DI AUTELLI ING. GUIDO / ING. GUIDO AUTELLI", path: storageRoots.autsys_piva || null, purpose: "Archivio fisico dei documenti AI emessi da AUTSYS individuale/P.IVA o come Ing. Guido Autelli" },
-    { entity: "AUTSYS S.R.L.S.", path: storageRoots.autsys_srls || null, purpose: "Archivio fisico dei documenti AI emessi da AUTSYS S.R.L.S." }
-  ].filter(x => x.path);
+  const documentData = buildDocumentBootstrap(documentRulesResult.rows, documentRulesOptional.warning);
+  if (!documentData.documentRuleCompliance.complete) {
+    const c = documentData.documentRuleCompliance;
+    warnings.push("DOCUMENT_BOOTSTRAP_INCOMPLETE: missingRules=" + c.missingMandatoryRuleKeys.join(",") +
+      "; missingStorageRoots=" + c.missingStorageRootKeys.join(",") +
+      "; unclassifiedRules=" + c.unclassifiedRuleKeys.join(","));
+  }
   const found = Boolean(row.project_found);
   // Project handoffs live exclusively in the owner's local AUTSYS_PROJECT.sqlite.
   // Bootstrap must surface pending handoffs without consuming or changing them.
@@ -583,11 +687,12 @@ async function bootstrap(scope, projectName = "", bridgeId = "") {
   }
 
   return {
-    ok: true,
+    ok: documentData.documentRuleCompliance.complete,
+    bootstrapStatus: documentData.documentRuleCompliance.complete ? (warnings.length ? "PARTIAL" : "COMPLETE") : "INCOMPLETE_DOCUMENT_RULES",
     operation: "session.bootstrap",
     source: "ROBERTA",
     bootstrapVersion: "6",
-    bootstrapRevision: "6.1",
+    bootstrapRevision: "6.2",
     completedUtc: new Date().toISOString(),
     scope,
     project: {
@@ -637,10 +742,13 @@ async function bootstrap(scope, projectName = "", bridgeId = "") {
     openItems: openItemRows,
     pendingHandoffCount: pendingHandoffs.length ? Number(pendingHandoffs[0].pending_total || pendingHandoffs.length) : 0,
     pendingHandoffs,
-    documentRuleCount: 0,
-    documentRules: [],
-    documentStorageRootCount: 0,
-    documentStorageRoots: [],
+    documentRuleCount: documentData.documentRuleCount,
+    documentRules: documentData.documentRules,
+    documentRuleGroups: documentData.documentRuleGroups,
+    documentIssuerSelection: documentData.documentIssuerSelection,
+    documentRuleCompliance: documentData.documentRuleCompliance,
+    documentStorageRootCount: documentData.documentStorageRootCount,
+    documentStorageRoots: documentData.documentStorageRoots,
     warnings,
     database: core.database || agent.database || context.database || "roberta"
   };
@@ -1870,7 +1978,7 @@ function buildMcp() {
 
   mcp.registerTool("session_bootstrap", {
     title: "Bootstrap AUTSYS",
-    description: "Bootstrap ROBERTA v6.1 da eseguire una sola volta all'avvio della conversazione. Non richiamare nella stessa conversazione dopo un bootstrap riuscito salvo richiesta esplicita dell'utente di ricaricare/re-bootstrap o cambio progetto. Le normali richieste operative non richiedono un nuovo bootstrap.",
+    description: "Bootstrap ROBERTA v6.2 da eseguire una sola volta all'avvio della conversazione. Non richiamare nella stessa conversazione dopo un bootstrap riuscito salvo richiesta esplicita dell'utente di ricaricare/re-bootstrap o cambio progetto. Le normali richieste operative non richiedono un nuovo bootstrap.",
     inputSchema: z.object({
       scope: z.enum(["GENERAL", "PROJECT"]),
       projectName: z.string().optional(),
@@ -2118,7 +2226,7 @@ app.get("/health", (_req, res) =>
     product: "AUTSYS MCP FULL FRONT",
     version: VERSION,
     bootstrapVersion: "6",
-    bootstrapRevision: "6.1",
+    bootstrapRevision: "6.2",
     renderTools: true,
     utc: new Date().toISOString()
   }));
