@@ -477,6 +477,37 @@ function buildDocumentBootstrap(rows, queryWarning = null) {
   };
 }
 
+
+// The Render/Windows bridge serializes PostgreSQL requests. Fan-out can cause
+// queue waits longer than the client timeout. Bundle optional read-only SELECTs
+// into one PostgreSQL roundtrip without changing their returned row schemas.
+async function batchedOptionalQueryRows(specs, bridgeId) {
+  const projections = specs.map((spec, i) => {
+    const sql = String(spec.sql || "").trim().replace(/;\s*$/, "");
+    if (!/^SELECT\s/i.test(sql)) throw new Error("Bootstrap bundle accepts SELECT only: " + spec.label);
+    return "COALESCE((SELECT jsonb_agg(to_jsonb(q" + i + ")) FROM (" + sql +
+      ") AS q" + i + "), '[]'::jsonb) AS b" + i;
+  });
+  try {
+    const data = await queryRows("SELECT\n" + projections.join(",\n") + ";", bridgeId, "bootstrap read-only bundle");
+    const record = Array.isArray(data.rows) && data.rows.length ? data.rows[0] : {};
+    return specs.map((spec, i) => {
+      const rows = record["b" + i];
+      if (!Array.isArray(rows)) throw new Error("Bootstrap bundle missing rows: " + spec.label);
+      return { data: { rows }, warning: null };
+    });
+  } catch (error) {
+    // Preserve isolated optional-query diagnostics; never send another fan-out.
+    // Document rules are first to be recovered if the bundle itself fails.
+    const recovered = new Array(specs.length);
+    const order = [3, ...specs.map((_, i) => i).filter(i => i !== 3)];
+    for (const i of order) {
+      recovered[i] = await optionalQueryRows(specs[i].sql, bridgeId, specs[i].label);
+    }
+    return recovered;
+  }
+}
+
 async function bootstrap(scope, projectName = "", bridgeId = "") {
   scope = String(scope || "").toUpperCase();
   if (!new Set(["GENERAL", "PROJECT"]).has(scope)) {
@@ -615,19 +646,21 @@ async function bootstrap(scope, projectName = "", bridgeId = "") {
       oi.updated_at DESC NULLS LAST,oi.id;`;
 
   const core = await queryRows(coreSql, bridgeId, "bootstrap core");
-  const [identityOptional, foundationOptional, rulesOptional, documentRulesOptional, agentOptional, contextOptional, globalContextOptional, activeLearningOptional, databaseCatalogOptional, databaseSourcesOptional, openItemsOptional] = await Promise.all([
-    optionalQueryRows(agentIdentitySql, bridgeId, "bootstrap agent identity"),
-    optionalQueryRows(agentFoundationSql, bridgeId, "bootstrap agent foundation"),
-    optionalQueryRows(agentRulesSql, bridgeId, "bootstrap agent rules"),
-    optionalQueryRows(documentRulesSql, bridgeId, "bootstrap document rules"),
-    optionalQueryRows(agentSql, bridgeId, "bootstrap agent capabilities"),
-    optionalQueryRows(contextSql, bridgeId, "bootstrap project context"),
-    optionalQueryRows(globalContextSql, bridgeId, "bootstrap global context"),
-    optionalQueryRows(activeLearningSql, bridgeId, "bootstrap active learning"),
-    optionalQueryRows(databaseCatalogSql, bridgeId, "bootstrap database catalog"),
-    optionalQueryRows(databaseSourcesSql, bridgeId, "bootstrap project database sources"),
-    optionalQueryRows(openItemSql, bridgeId, "bootstrap open items")
-  ]);
+  const [identityOptional, foundationOptional, rulesOptional, documentRulesOptional, agentOptional,
+    contextOptional, globalContextOptional, activeLearningOptional, databaseCatalogOptional,
+    databaseSourcesOptional, openItemsOptional] = await batchedOptionalQueryRows([
+    { sql: agentIdentitySql, label: "bootstrap agent identity" },
+    { sql: agentFoundationSql, label: "bootstrap agent foundation" },
+    { sql: agentRulesSql, label: "bootstrap agent rules" },
+    { sql: documentRulesSql, label: "bootstrap document rules" },
+    { sql: agentSql, label: "bootstrap agent capabilities" },
+    { sql: contextSql, label: "bootstrap project context" },
+    { sql: globalContextSql, label: "bootstrap global context" },
+    { sql: activeLearningSql, label: "bootstrap active learning" },
+    { sql: databaseCatalogSql, label: "bootstrap database catalog" },
+    { sql: databaseSourcesSql, label: "bootstrap project database sources" },
+    { sql: openItemSql, label: "bootstrap open items" }
+  ], bridgeId);
   const identity = identityOptional.data;
   const foundation = foundationOptional.data;
   const rules = rulesOptional.data;
